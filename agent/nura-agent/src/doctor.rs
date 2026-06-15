@@ -31,7 +31,7 @@ impl Check {
     }
 }
 
-pub fn run() {
+pub fn run() -> nura_core::error::Result<()> {
     println!("nura-agent doctor ({})", version::version_string());
     println!("{}", "=".repeat(50));
 
@@ -60,9 +60,13 @@ pub fn run() {
     println!("{}", "=".repeat(50));
     if failures == 0 {
         println!("All checks passed.");
+        Ok(())
     } else {
         println!("{} check(s) failed.", failures);
-        std::process::exit(1);
+        Err(nura_core::error::NuraError::Internal(format!(
+            "{} doctor check(s) failed",
+            failures
+        )))
     }
 }
 

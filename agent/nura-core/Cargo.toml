@@ -7,3 +7,6 @@ description = "NuraOS agent core library"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4"] }
