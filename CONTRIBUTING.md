@@ -40,7 +40,7 @@ Subject line rules:
 
 ## Style rules (enforced by CI)
 
-- No em dash (`—`) anywhere: code, comments, docs, commit messages.
+- No em dash (U+2014) anywhere: code, comments, docs, commit messages.
 - Prefer "explore" or "investigate" over "experience" in prose.
 - Secrets are never committed. Provider API keys, gateway tokens, and private
   keys go in `/data/etc/secrets.toml` or environment variables only.
