@@ -1,0 +1,14 @@
+{
+  "id": "rpi5",
+  "name": "Raspberry Pi 5",
+  "arch": "aarch64",
+  "cpu": "cortex-a76",
+  "cpu_flags": ["-DGGML_NATIVE=OFF", "-DGGML_NEON=ON"],
+  "min_ram_mb": 4096,
+  "recommended_ram_mb": 8192,
+  "vcpus": 4,
+  "storage": "nvme-or-sd",
+  "machine": "raspi5",
+  "accel": "native",
+  "notes": "Cortex-A76, 2-3x faster than Pi 4. 8 GB variant can run 3B-param models at Q4_K_M. NVMe via PCIe hat strongly recommended."
+}

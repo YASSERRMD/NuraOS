@@ -1,0 +1,14 @@
+{
+  "id": "generic-arm64",
+  "name": "Generic ARM64 (server / cloud VM)",
+  "arch": "aarch64",
+  "cpu": "generic",
+  "cpu_flags": ["-DGGML_NATIVE=OFF", "-DGGML_NEON=ON"],
+  "min_ram_mb": 2048,
+  "recommended_ram_mb": 4096,
+  "vcpus": 2,
+  "storage": "virtio-blk",
+  "machine": "virt",
+  "accel": "kvm-or-hvf",
+  "notes": "Covers AWS Graviton, GCP T2A, OCI Ampere, Hetzner CAX. Enable KVM or HVF for near-native performance."
+}
