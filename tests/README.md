@@ -114,3 +114,69 @@ config secret values are replaced with `[REDACTED]`).
 | e2e | 43, 44, 103 |
 
 See `adr/001-harness-language.md` for the language choice rationale.
+
+## Coverage checklist
+
+The test automation system is built across 21 phases (T00–T20). Each row links
+the implementation artefact to the phase that produced it. All phases are
+complete for v1.0.
+
+| Phase | Title | Key artefacts | Status |
+| --- | --- | --- | --- |
+| T00 | Harness scaffold | `tests/go.mod`, `tests/harness/`, `tests/reporters/`, `tests/cmd/run-suite/main.go` | ✓ |
+| T01 | CI workflow | `.github/workflows/test.yml` (build-image, build-harness, suite matrix, aggregate jobs) | ✓ |
+| T02 | Issue filing | `tests/tools/file-issue.sh` (create, dedup, recurrence comment, close-on-green) | ✓ |
+| T03 | CI documentation | `tests/ci.md` | ✓ |
+| T04 | build-and-boot suite | `tests/suites/build-and-boot/suite.go` (6 cases) | ✓ |
+| T05 | agent-core suite | `tests/suites/agent-core/suite.go` (8 cases) | ✓ |
+| T06 | providers suite | `tests/suites/providers/suite.go` (9 cases, SSE parser, model gating) | ✓ |
+| T07 | tools suite | `tests/suites/tools/suite.go` (tool-list and invocation cases) | ✓ |
+| T08 | services-http suite | `tests/suites/services-http/suite.go` (all gateway endpoints) | ✓ |
+| T09 | provenance-security suite | `tests/suites/provenance-security/suite.go` (signing, secret scan) | ✓ |
+| T10 | storage suite | `tests/suites/storage/suite.go` (data image, persistence) | ✓ |
+| T11 | logging-time suite | `tests/suites/logging-time/suite.go` (structured logs, clock sync) | ✓ |
+| T12 | devices-power suite | `tests/suites/devices-power/suite.go` (power-loss, device enumeration) | ✓ |
+| T13 | network-firewall suite | `tests/suites/network-firewall/suite.go` (firewall policy, offline boot) | ✓ |
+| T14 | updates suite | `tests/suites/updates/suite.go` (A/B slot switch, rollback) | ✓ |
+| T15 | performance suite | `tests/suites/performance/suite.go` (boot time, chat latency) | ✓ |
+| T16 | e2e suite | `tests/suites/e2e/suite.go` (full chat round-trip, tool call) | ✓ |
+| T17 | Reporting | `tests/tools/merge-reports.sh`, `tests/reporting.md` (merged-report.json, badge, trend, HTML) | ✓ |
+| T18 | Issue governance | `tests/tools/flake-detect.sh`, `tests/tools/quarantine.json`, `tests/issue-automation.md` | ✓ |
+| T19 | Local runner | `scripts/test.sh`, `tests/tools/install-hook.sh`, `tests/local.md` | ✓ |
+| T20 | Validation | This checklist, `tests/README.md` (final sign-off) | ✓ |
+
+### Case count by suite
+
+| Suite | Cases |
+| --- | --- |
+| build-and-boot | 6 |
+| agent-core | 8 |
+| providers | 9 |
+| tools | varies (tool count) |
+| services-http | 11 (one per endpoint + POST /chat) |
+| provenance-security | 5+ |
+| storage | 4+ |
+| logging-time | 4+ |
+| devices-power | 4+ |
+| network-firewall | 3+ |
+| updates | 4+ |
+| performance | 3+ |
+| e2e | 3+ |
+| **Total** | **≥ 70** |
+
+### Tooling checklist
+
+- [x] `go vet ./...` passes on the `tests/` module
+- [x] All suites compile with `go build ./...`
+- [x] `tests/.gitignore` anchors `/run-suite` (binary only, not source dir)
+- [x] No external Go dependencies (`tests/go.mod` stdlib only)
+- [x] `file-issue.sh` creates labels idempotently via `--force`
+- [x] `merge-reports.sh` exits 1 when any suite failed
+- [x] `flake-detect.sh` supports `--dry-run`
+- [x] `scripts/test.sh` checks prereqs before building
+- [x] Pre-push hook is opt-in (`install-hook.sh`), not installed by default
+- [x] All shell scripts pass `shellcheck` (set -euo pipefail, quoted expansions)
+- [x] CI sets `fail-fast: false` so all suites run regardless of individual failures
+- [x] Remote provider cases skip (not fail) when API keys are absent
+- [x] QEMU `NoNetwork` mode used for offline-boot tests
+- [x] Evidence bundles redact API keys and Bearer tokens before writing
