@@ -63,3 +63,77 @@ device (`/dev/vda` in the guest) when the file exists:
   lives exclusively on `/data`.
 - `/data` is not encrypted in the current release. Full-disk encryption is a
   future operator option documented in `/docs/security.md`.
+
+---
+
+## Durability model
+
+### ext4 mount options
+
+`/data` is mounted with options that balance durability and wear:
+
+```
+data=ordered,barrier=1,noatime
+```
+
+| Option         | Effect |
+|----------------|--------|
+| `data=ordered` | Data blocks written before journal commits metadata; prevents stale data after crash |
+| `barrier=1`    | Write barriers flush the device write cache at journal commit; required for drives with volatile caches |
+| `noatime`      | Suppresses access-time writes; reduces flash wear |
+
+### fsck-on-boot policy
+
+Before mounting `/data` read-write, `/init` runs:
+
+```sh
+timeout 30 e2fsck -p /dev/vda
+```
+
+| Exit code | Meaning | Action |
+|-----------|---------|--------|
+| 0 | Clean | Mount read-write |
+| 1 | Errors fixed | Mount read-write |
+| > 1 | Uncorrectable | Mount read-only for recovery |
+
+Boot with `nura.recovery=1` on the kernel cmdline to get a shell and run
+`e2fsck -y /dev/vda` manually.
+
+### Atomic write pattern
+
+All config and state files are written atomically to prevent partial files on
+crash. The `atomicfile.Write` function in `services/internal/atomicfile`
+implements:
+
+1. Write data to a unique temp file in the **same directory** as the target.
+2. `fsync()` the temp file (flush to block device).
+3. `rename(temp, target)` -- atomic on POSIX.
+4. `fsync()` the parent directory (durable directory entry update).
+
+Writers that use this pattern:
+
+| State file | Package |
+|------------|---------|
+| `/data/machine-id` | `identity` |
+| Any config written by services | `atomicfile.Write` directly |
+
+Journal files use `O_APPEND` writes and are fsynced on `Writer.Close()`.
+Call `Writer.Sync()` after a burst of critical records for mid-stream durability.
+
+### Power-loss simulation test
+
+```sh
+sudo scripts/test-power-loss.sh
+```
+
+Creates a 32 MiB ext4 image, writes 20 files using atomic rename, force-unmounts,
+and verifies the filesystem with `e2fsck -fn`. Requires root (loop mount).
+
+### Durability guarantees
+
+| Scenario | Guarantee |
+|----------|-----------|
+| Power loss during config write | Old file intact (rename atomicity) |
+| Power loss during journal append | Partial last record only; all prior records intact |
+| Power loss during ext4 commit | e2fsck restores metadata consistency on next boot |
+| Disk full | Journal rotation drops oldest day files; `atomicfile.Write` fails explicitly |

@@ -64,21 +64,41 @@ for dev in /dev/vda /dev/vdb /dev/sda; do
     [ -b "${dev}" ] && DATA_DEV="${dev}" && break
 done
 
+DATA_MOUNT_OPTS="data=ordered,barrier=1,noatime"
+
 if [ -n "${DATA_DEV}" ]; then
-    log "mounting /data from ${DATA_DEV} ..."
-    if mount -t ext4 "${DATA_DEV}" /data 2>/dev/null; then
-        log "/data mounted"
-        # Ensure expected subdirectory layout.
-        mkdir -p /data/models /data/logs /data/sessions /data/etc
+    # Run fsck before mounting; bound it to 30 seconds.
+    log "fsck ${DATA_DEV} ..."
+    if timeout 30 e2fsck -p "${DATA_DEV}" >/dev/console 2>&1; then
+        FSCK_RC=$?
     else
-        warn "failed to mount ${DATA_DEV} as ext4; /data will be tmpfs"
-        mount -t tmpfs tmpfs /data
-        mkdir -p /data/models /data/logs /data/sessions /data/etc
+        FSCK_RC=$?
+    fi
+
+    if [ "${FSCK_RC}" -le 1 ]; then
+        # 0 = filesystem clean, 1 = errors corrected -- safe to mount rw.
+        log "mounting /data from ${DATA_DEV} (${DATA_MOUNT_OPTS}) ..."
+        if mount -t ext4 -o "${DATA_MOUNT_OPTS}" "${DATA_DEV}" /data 2>/dev/null; then
+            log "/data mounted (durable)"
+            mkdir -p /data/models /data/logs /data/sessions /data/etc /data/journal
+        else
+            warn "failed to mount ${DATA_DEV}; /data will be tmpfs"
+            mount -t tmpfs tmpfs /data
+            mkdir -p /data/models /data/logs /data/sessions /data/etc /data/journal
+        fi
+    else
+        # fsck could not repair; mount read-only for recovery inspection.
+        warn "fsck returned ${FSCK_RC} on ${DATA_DEV}; mounting read-only for recovery"
+        if ! mount -t ext4 -o ro "${DATA_DEV}" /data 2>/dev/null; then
+            warn "read-only mount also failed; /data will be tmpfs"
+            mount -t tmpfs tmpfs /data
+        fi
+        mkdir -p /data/models /data/logs /data/sessions /data/etc /data/journal 2>/dev/null || true
     fi
 else
     warn "no /data block device found; /data will be tmpfs (no persistence)"
     mount -t tmpfs tmpfs /data
-    mkdir -p /data/models /data/logs /data/sessions /data/etc
+    mkdir -p /data/models /data/logs /data/sessions /data/etc /data/journal
 fi
 
 # ----- Least-privilege setup (Phase 41) -----
