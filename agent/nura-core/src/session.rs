@@ -92,48 +92,39 @@ impl SessionStore {
     }
 
     fn ensure_dir(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.sessions_dir).map_err(|e| NuraError::Session(format!(
-            "cannot create sessions dir '{}': {}",
-            self.sessions_dir.display(),
-            e
-        )))
+        std::fs::create_dir_all(&self.sessions_dir).map_err(|e| {
+            NuraError::Session(format!(
+                "cannot create sessions dir '{}': {}",
+                self.sessions_dir.display(),
+                e
+            ))
+        })
     }
 
     /// Load a session by ID. Returns `Err` if the file does not exist.
     pub fn load(&self, id: &str) -> Result<Session> {
         let path = self.path_for(id);
-        let raw = std::fs::read_to_string(&path).map_err(|e| NuraError::Session(format!(
-            "cannot read session '{}': {}",
-            path.display(),
-            e
-        )))?;
-        serde_json::from_str(&raw).map_err(|e| NuraError::Session(format!(
-            "cannot parse session '{}': {}",
-            id,
-            e
-        )))
+        let raw = std::fs::read_to_string(&path).map_err(|e| {
+            NuraError::Session(format!("cannot read session '{}': {}", path.display(), e))
+        })?;
+        serde_json::from_str(&raw)
+            .map_err(|e| NuraError::Session(format!("cannot parse session '{}': {}", id, e)))
     }
 
     /// Persist a session to disk.
     pub fn save(&self, session: &Session) -> Result<()> {
         self.ensure_dir()?;
         let path = self.path_for(&session.id);
-        let json = serde_json::to_string(session).map_err(|e| NuraError::Session(format!(
-            "cannot serialise session '{}': {}",
-            session.id,
-            e
-        )))?;
+        let json = serde_json::to_string(session).map_err(|e| {
+            NuraError::Session(format!("cannot serialise session '{}': {}", session.id, e))
+        })?;
 
         // Atomic write via temp file on the same filesystem.
         let tmp_path = self.sessions_dir.join(format!("{}.json.tmp", session.id));
-        std::fs::write(&tmp_path, &json).map_err(|e| NuraError::Session(format!(
-            "cannot write session tmp file: {}",
-            e
-        )))?;
-        std::fs::rename(&tmp_path, &path).map_err(|e| NuraError::Session(format!(
-            "cannot rename session file: {}",
-            e
-        )))
+        std::fs::write(&tmp_path, &json)
+            .map_err(|e| NuraError::Session(format!("cannot write session tmp file: {}", e)))?;
+        std::fs::rename(&tmp_path, &path)
+            .map_err(|e| NuraError::Session(format!("cannot rename session file: {}", e)))
     }
 
     /// Delete a session file. Returns `Ok(())` if the file did not exist.
@@ -144,8 +135,7 @@ impl SessionStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(NuraError::Session(format!(
                 "cannot delete session '{}': {}",
-                id,
-                e
+                id, e
             ))),
         }
     }
@@ -156,9 +146,9 @@ impl SessionStore {
             return Ok(Vec::new());
         }
         let mut ids = Vec::new();
-        for entry in std::fs::read_dir(&self.sessions_dir).map_err(|e| {
-            NuraError::Session(format!("cannot read sessions dir: {}", e))
-        })? {
+        for entry in std::fs::read_dir(&self.sessions_dir)
+            .map_err(|e| NuraError::Session(format!("cannot read sessions dir: {}", e)))?
+        {
             let entry = entry.map_err(|e| NuraError::Session(e.to_string()))?;
             let name = entry.file_name().to_string_lossy().to_string();
             if let Some(id) = name.strip_suffix(".json") {

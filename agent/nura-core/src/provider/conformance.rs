@@ -100,7 +100,10 @@ fn check_streaming_ends_with_done(provider: &dyn Provider, v: &mut Vec<Violation
     }
 
     let has_done = events.iter().any(|e| {
-        matches!(e, Ok(StreamEvent::Done { .. }) | Ok(StreamEvent::Error { .. }))
+        matches!(
+            e,
+            Ok(StreamEvent::Done { .. }) | Ok(StreamEvent::Error { .. })
+        )
     });
     if !has_done {
         fail(v, CHECK, "stream ended without a Done or Error event");
@@ -142,12 +145,14 @@ fn check_cancel_respected(provider: &dyn Provider, v: &mut Vec<Violation>) {
 fn check_empty_message_list(provider: &dyn Provider, v: &mut Vec<Violation>) {
     const CHECK: &str = "empty_message_list";
     let cancel = CancelToken::new();
-    let events: Vec<_> = provider
-        .complete(&[], &default_params(), &cancel)
-        .collect();
+    let events: Vec<_> = provider.complete(&[], &default_params(), &cancel).collect();
 
     if events.is_empty() {
-        fail(v, CHECK, "complete([]) yielded no events -- must yield at least one");
+        fail(
+            v,
+            CHECK,
+            "complete([]) yielded no events -- must yield at least one",
+        );
     }
 }
 
@@ -160,7 +165,10 @@ fn check_done_is_last_event(provider: &dyn Provider, v: &mut Vec<Violation>) {
         .collect();
 
     let terminal_pos = events.iter().position(|e| {
-        matches!(e, Ok(StreamEvent::Done { .. }) | Ok(StreamEvent::Error { .. }))
+        matches!(
+            e,
+            Ok(StreamEvent::Done { .. }) | Ok(StreamEvent::Error { .. })
+        )
     });
 
     if let Some(pos) = terminal_pos {
@@ -196,7 +204,10 @@ fn check_no_events_after_done(provider: &dyn Provider, v: &mut Vec<Violation>) {
             );
             break;
         }
-        if matches!(e, Ok(StreamEvent::Done { .. }) | Ok(StreamEvent::Error { .. })) {
+        if matches!(
+            e,
+            Ok(StreamEvent::Done { .. }) | Ok(StreamEvent::Error { .. })
+        ) {
             seen_terminal = true;
         }
     }
@@ -244,14 +255,16 @@ mod tests {
                 messages: &[Message],
                 params: &SamplingParams,
                 cancel: &CancelToken,
-            ) -> Box<dyn Iterator<Item = crate::error::Result<StreamEvent>> + Send + 'a> {
+            ) -> Box<dyn Iterator<Item = crate::error::Result<StreamEvent>> + Send + 'a>
+            {
                 StubProvider.complete(messages, params, cancel)
             }
         }
         let v = run_conformance_suite(&EmptyNameProvider);
         assert!(
             v.iter().any(|f| f.check == "name"),
-            "expected name violation, got: {:?}", v
+            "expected name violation, got: {:?}",
+            v
         );
     }
 
@@ -270,14 +283,16 @@ mod tests {
                 messages: &[Message],
                 params: &SamplingParams,
                 cancel: &CancelToken,
-            ) -> Box<dyn Iterator<Item = crate::error::Result<StreamEvent>> + Send + 'a> {
+            ) -> Box<dyn Iterator<Item = crate::error::Result<StreamEvent>> + Send + 'a>
+            {
                 StubProvider.complete(messages, params, cancel)
             }
         }
         let v = run_conformance_suite(&SpaceNameProvider);
         assert!(
             v.iter().any(|f| f.check == "name"),
-            "expected name violation for whitespace, got: {:?}", v
+            "expected name violation for whitespace, got: {:?}",
+            v
         );
     }
 
@@ -299,16 +314,14 @@ mod tests {
                 _params: &SamplingParams,
                 _cancel: &CancelToken,
             ) -> Box<dyn Iterator<Item = Result<StreamEvent>> + Send + 'a> {
-                Box::new(
-                    vec![Ok(StreamEvent::token("hello"))]
-                        .into_iter(),
-                )
+                Box::new(vec![Ok(StreamEvent::token("hello"))].into_iter())
             }
         }
         let v = run_conformance_suite(&NoDoneProvider);
         assert!(
             v.iter().any(|f| f.check == "streaming_ends_with_done"),
-            "expected streaming_ends_with_done violation, got: {:?}", v
+            "expected streaming_ends_with_done violation, got: {:?}",
+            v
         );
     }
 
@@ -341,8 +354,10 @@ mod tests {
         }
         let v = run_conformance_suite(&ExtraAfterDoneProvider);
         assert!(
-            v.iter().any(|f| f.check == "done_is_last" || f.check == "no_events_after_done"),
-            "expected done_is_last or no_events_after_done violation, got: {:?}", v
+            v.iter()
+                .any(|f| f.check == "done_is_last" || f.check == "no_events_after_done"),
+            "expected done_is_last or no_events_after_done violation, got: {:?}",
+            v
         );
     }
 }

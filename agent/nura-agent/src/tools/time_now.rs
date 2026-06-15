@@ -68,10 +68,7 @@ pub fn unix_to_rfc3339(unix_secs: u64) -> String {
     let mo = if mp < 10 { mp + 3 } else { mp - 9 };
     let yr = if mo <= 2 { y + 1 } else { y };
 
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        yr, mo, d, h, m, s
-    )
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", yr, mo, d, h, m, s)
 }
 
 #[cfg(test)]

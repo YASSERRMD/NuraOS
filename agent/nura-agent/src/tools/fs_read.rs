@@ -82,12 +82,11 @@ impl Tool for FsReadTool {
             .map(|n| (n as usize).min(MAX_READ_BYTES))
             .unwrap_or(DEFAULT_READ_BYTES);
 
-        let path = check_path(path_str, &self.allowed_prefixes).map_err(|reason| {
-            NuraError::Tool {
+        let path =
+            check_path(path_str, &self.allowed_prefixes).map_err(|reason| NuraError::Tool {
                 name: self.name().into(),
                 detail: reason,
-            }
-        })?;
+            })?;
 
         let mut file = std::fs::File::open(&path).map_err(|e| NuraError::Tool {
             name: self.name().into(),
@@ -118,23 +117,25 @@ impl Tool for FsReadTool {
 /// Rejects paths that contain `..` components or that don't start with one
 /// of the allowed prefixes. Symlinks are not followed; path validation is
 /// purely lexical.
-pub fn check_path(raw: &str, allowed_prefixes: &[String]) -> std::result::Result<std::path::PathBuf, String> {
+pub fn check_path(
+    raw: &str,
+    allowed_prefixes: &[String],
+) -> std::result::Result<std::path::PathBuf, String> {
     let path = Path::new(raw);
 
     for component in path.components() {
         if component == Component::ParentDir {
-            return Err(format!(
-                "path '{}' contains '..' which is not allowed",
-                raw
-            ));
+            return Err(format!("path '{}' contains '..' which is not allowed", raw));
         }
     }
 
-    if !allowed_prefixes.iter().any(|pfx| raw.starts_with(pfx.as_str())) {
+    if !allowed_prefixes
+        .iter()
+        .any(|pfx| raw.starts_with(pfx.as_str()))
+    {
         return Err(format!(
             "path '{}' is outside the allowed prefixes ({:?})",
-            raw,
-            allowed_prefixes
+            raw, allowed_prefixes
         ));
     }
 

@@ -20,9 +20,7 @@ pub fn estimate_tokens(msg: &Message) -> u32 {
                 name, arguments, ..
             } => name.len() + arguments.to_string().len() + 16,
             ContentPart::ToolCallResult { output, error, .. } => {
-                output.to_string().len()
-                    + error.as_deref().map(str::len).unwrap_or(0)
-                    + 8
+                output.to_string().len() + error.as_deref().map(str::len).unwrap_or(0) + 8
             }
         })
         .sum();
@@ -95,10 +93,7 @@ pub fn assemble_context(history: &[Message], policy: &ContextPolicy) -> Vec<Mess
         .cloned()
         .collect();
 
-    let turn_msgs: Vec<&Message> = history
-        .iter()
-        .filter(|m| m.role != Role::System)
-        .collect();
+    let turn_msgs: Vec<&Message> = history.iter().filter(|m| m.role != Role::System).collect();
 
     let system_tokens: u32 = system_msgs.iter().map(estimate_tokens).sum();
     let token_budget = policy.max_tokens.saturating_sub(system_tokens);
@@ -164,10 +159,7 @@ mod tests {
     fn estimate_total_sums_messages() {
         let msgs = vec![user("hello"), assistant("world")];
         let total = estimate_total(&msgs);
-        assert_eq!(
-            total,
-            estimate_tokens(&msgs[0]) + estimate_tokens(&msgs[1])
-        );
+        assert_eq!(total, estimate_tokens(&msgs[0]) + estimate_tokens(&msgs[1]));
     }
 
     // ---- assemble_context ----
@@ -204,9 +196,7 @@ mod tests {
     #[test]
     fn token_budget_enforced() {
         // Very tight budget: only 1 turn should fit.
-        let history: Vec<Message> = (0..10)
-            .map(|_| user(&"w".repeat(200)))
-            .collect();
+        let history: Vec<Message> = (0..10).map(|_| user(&"w".repeat(200))).collect();
         let one_msg_tokens = estimate_tokens(&history[0]);
         let policy = ContextPolicy {
             max_tokens: one_msg_tokens + 1, // room for exactly 1 turn

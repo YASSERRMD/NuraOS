@@ -16,8 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Starting prev_hash for the first entry in the chain.
-pub const GENESIS_HASH: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Rotate to a new file once the current one exceeds this size.
 const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
@@ -69,11 +68,13 @@ fn compute_hash(prev_hash: &str, payload: &HashPayload<'_>) -> String {
     let mut h = Sha256::new();
     h.update(prev_hash.as_bytes());
     h.update(&payload_bytes);
-    h.finalize().iter().fold(String::with_capacity(64), |mut s, b| {
-        use std::fmt::Write as _;
-        let _ = write!(s, "{:02x}", b);
-        s
-    })
+    h.finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut s, b| {
+            use std::fmt::Write as _;
+            let _ = write!(s, "{:02x}", b);
+            s
+        })
 }
 
 /// Format seconds-since-epoch as `YYYY-MM-DDTHH:MM:SSZ` without external deps.
@@ -137,15 +138,29 @@ impl ProvenanceWriter {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
         let (file_path, seq, last_hash, file_bytes) = Self::scan(&dir)?;
-        let file = OpenOptions::new().create(true).append(true).open(&file_path)?;
-        Ok(Self { dir, file, seq, last_hash, file_bytes })
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)?;
+        Ok(Self {
+            dir,
+            file,
+            seq,
+            last_hash,
+            file_bytes,
+        })
     }
 
     /// Scan the directory for the current write position and last hash.
     fn scan(dir: &Path) -> std::io::Result<(PathBuf, u64, String, u64)> {
         let mut files = Self::sorted_files(dir)?;
         if files.is_empty() {
-            return Ok((dir.join("session-0001.jsonl"), 0, GENESIS_HASH.to_string(), 0));
+            return Ok((
+                dir.join("session-0001.jsonl"),
+                0,
+                GENESIS_HASH.to_string(),
+                0,
+            ));
         }
         let latest = files.pop().unwrap();
         let file_bytes = std::fs::metadata(&latest)?.len();
@@ -209,8 +224,7 @@ impl ProvenanceWriter {
             prev_hash,
             hash: hash.clone(),
         };
-        let mut line = serde_json::to_string(&entry)
-            .map_err(std::io::Error::other)?;
+        let mut line = serde_json::to_string(&entry).map_err(std::io::Error::other)?;
         line.push('\n');
         let bytes = line.as_bytes();
         self.file.write_all(bytes)?;
@@ -223,7 +237,10 @@ impl ProvenanceWriter {
     fn rotate(&mut self) -> std::io::Result<()> {
         let n = Self::sorted_files(&self.dir)?.len() as u32 + 1;
         let new_path = self.dir.join(format!("session-{:04}.jsonl", n));
-        self.file = OpenOptions::new().create(true).append(true).open(&new_path)?;
+        self.file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&new_path)?;
         self.file_bytes = 0;
         // last_hash carries over for chain continuity
         Ok(())
@@ -259,9 +276,8 @@ pub fn verify_chain(dir: impl AsRef<Path>) -> Result<u64, String> {
             if line.trim().is_empty() {
                 continue;
             }
-            let entry: ProvenanceEntry = serde_json::from_str(&line).map_err(|e| {
-                format!("{}:{}: parse error: {}", path.display(), ln + 1, e)
-            })?;
+            let entry: ProvenanceEntry = serde_json::from_str(&line)
+                .map_err(|e| format!("{}:{}: parse error: {}", path.display(), ln + 1, e))?;
 
             if entry.seq != expected_seq {
                 return Err(format!(
@@ -333,12 +349,8 @@ mod tests {
             serde_json::json!({"text": "world"}),
         )
         .unwrap();
-        w.append(
-            EventKind::TurnEnd,
-            "turn-1",
-            serde_json::json!({}),
-        )
-        .unwrap();
+        w.append(EventKind::TurnEnd, "turn-1", serde_json::json!({}))
+            .unwrap();
 
         let n = verify_chain(dir.path()).unwrap();
         assert_eq!(n, 3);
@@ -348,8 +360,10 @@ mod tests {
     fn test_verify_detects_hash_tamper() {
         let dir = tmp_dir();
         let mut w = ProvenanceWriter::open(dir.path()).unwrap();
-        w.append(EventKind::TurnStart, "t", serde_json::json!({})).unwrap();
-        w.append(EventKind::TurnEnd, "t", serde_json::json!({})).unwrap();
+        w.append(EventKind::TurnStart, "t", serde_json::json!({}))
+            .unwrap();
+        w.append(EventKind::TurnEnd, "t", serde_json::json!({}))
+            .unwrap();
         drop(w);
 
         // Tamper: replace a hash nibble in the first line.
@@ -370,12 +384,8 @@ mod tests {
         let dir = tmp_dir();
         let mut w = ProvenanceWriter::open(dir.path()).unwrap();
         for i in 0..5 {
-            w.append(
-                EventKind::TurnStart,
-                "t",
-                serde_json::json!({"i": i}),
-            )
-            .unwrap();
+            w.append(EventKind::TurnStart, "t", serde_json::json!({"i": i}))
+                .unwrap();
         }
         drop(w);
 
@@ -388,7 +398,9 @@ mod tests {
 
         let err = verify_chain(dir.path()).unwrap_err();
         assert!(
-            err.contains("seq mismatch") || err.contains("hash mismatch") || err.contains("prev_hash mismatch"),
+            err.contains("seq mismatch")
+                || err.contains("hash mismatch")
+                || err.contains("prev_hash mismatch"),
             "unexpected error: {err}"
         );
     }
@@ -399,10 +411,12 @@ mod tests {
         // Force rotation after first entry by setting file_bytes to MAX.
         let mut w = ProvenanceWriter::open(dir.path()).unwrap();
         // Write first entry normally, then simulate rotation threshold.
-        w.append(EventKind::TurnStart, "t", serde_json::json!({})).unwrap();
+        w.append(EventKind::TurnStart, "t", serde_json::json!({}))
+            .unwrap();
         // Manually bump file_bytes to trigger rotation on next write.
         w.file_bytes = MAX_FILE_BYTES;
-        w.append(EventKind::TurnEnd, "t", serde_json::json!({})).unwrap();
+        w.append(EventKind::TurnEnd, "t", serde_json::json!({}))
+            .unwrap();
         drop(w);
 
         // Should have two files now.

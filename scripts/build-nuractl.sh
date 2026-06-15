@@ -19,10 +19,11 @@ echo "==> Building nuractl ${BUILD_VERSION} ..."
 
 mkdir -p "$(dirname "${OUTPUT}")"
 
+cd "${SERVICES_DIR}"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags "-s -w" \
     -o "${OUTPUT}" \
-    "${SERVICES_DIR}/cmd/nuractl"
+    "./cmd/nuractl"
 
 echo "==> Installed: ${OUTPUT}"
 file "${OUTPUT}" 2>/dev/null || true

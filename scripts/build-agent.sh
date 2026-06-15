@@ -35,7 +35,7 @@ fi
 log "building nura-agent (profile: ${PROFILE}, target: ${MUSL_TARGET}) ..."
 cd "${AGENT_DIR}"
 RUSTFLAGS="-C target-feature=+crt-static" \
-    cargo build --target "${MUSL_TARGET}" "${CARGO_FLAGS[@]}"
+    cargo build --target "${MUSL_TARGET}" ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"}
 
 BINARY="${AGENT_DIR}/target/${MUSL_TARGET}/${PROFILE}/nura-agent"
 [ -f "${BINARY}" ] || die "binary not found: ${BINARY}"
