@@ -3,14 +3,19 @@
 // It fronts the Rust nura-agent for off-box access. Phase 28 ships
 // /healthz and /version; Phase 29 adds /chat (SSE) and /tools;
 // Phase 30 adds auth, rate limiting, and loopback-only binding;
-// Phase 31 adds /metrics (Prometheus) and /status (health summary).
+// Phase 31 adds /metrics (Prometheus) and /status (health summary);
+// Phase 34 adds graceful shutdown on SIGTERM/SIGINT.
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -22,9 +27,10 @@ var version = "dev"
 var zeroTime time.Time
 
 const (
-	defaultPort   = "8080"
-	agentSocket   = "/run/nura-agent.sock"
-	socketProbeTO = 500 * time.Millisecond
+	defaultPort      = "8080"
+	agentSocket      = "/run/nura-agent.sock"
+	socketProbeTO    = 500 * time.Millisecond
+	shutdownTimeout  = 15 * time.Second
 )
 
 func main() {
@@ -86,10 +92,30 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	if err := srv.ListenAndServe(); err != nil {
+	// Graceful shutdown: listen for SIGTERM or SIGINT, then drain connections.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-sigCh
+		slog.Info("shutdown signal received; draining connections",
+			"signal", sig,
+			"timeout", shutdownTimeout,
+		)
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			slog.Error("graceful shutdown did not complete within timeout",
+				"err", err,
+				"timeout", shutdownTimeout,
+			)
+		}
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("gateway terminated", "err", err)
 		os.Exit(1)
 	}
+	slog.Info("gateway shutdown complete")
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
