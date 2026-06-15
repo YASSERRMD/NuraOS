@@ -23,7 +23,7 @@ jobs:
       - name: Reject em dashes (U+2014)
         run: |
           set +e
-          hits=$(grep -rn $'—' \
+          hits=$(grep -rn $'\xe2\x80\x94' \
             --include="*.go" \
             --include="*.rs" \
             --include="*.sh" \

@@ -174,7 +174,7 @@ failures do not file new issues and do not fail the CI gate.
 - Every entry **must** have a non-empty `reason` and an `expires` date.
 - On the expiry date the entry must be reviewed: either removed (fixed),
   renewed with an updated date, or escalated to a blocking issue.
-- Entries with no `issue` field are allowed but discouraged — prefer linking
+- Entries with no `issue` field are allowed but discouraged - prefer linking
   the tracking issue so the history is clear.
 - PRs that add quarantine entries should reference the tracking issue in the
   commit message.

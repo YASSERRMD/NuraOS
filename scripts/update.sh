@@ -25,7 +25,6 @@
 set -euo pipefail
 
 SLOT_FILE="${ACTIVE_SLOT_FILE:-/data/etc/active-slot}"
-ROOTFS_DIR="${1+$1}"   # will be parsed below
 STATE_FILE="/data/etc/update-state.json"
 IMAGE_URL=""
 LOCAL_IMAGE=""

@@ -105,7 +105,7 @@ func caseBootImageSize(_ context.Context, inst *harness.QEMUInstance) harness.Re
 		path := filepath.Join(outDir, a.name)
 		info, err := os.Stat(path)
 		if err != nil {
-			// Artifact absent — skip rather than fail (may not be built yet).
+			// Artifact absent - skip rather than fail (may not be built yet).
 			continue
 		}
 		sizeMB := info.Size() / (1024 * 1024)

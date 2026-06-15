@@ -1,4 +1,4 @@
-# Suite T12 — devices-power
+# Suite T12 - devices-power
 
 Verifies hardware detection, virtio-net connectivity, the board information
 endpoint, and memory metrics exposure.

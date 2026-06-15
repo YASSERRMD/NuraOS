@@ -1,4 +1,4 @@
-# Suite T14 — updates
+# Suite T14 - updates
 
 Verifies the NuraOS A/B update subsystem: the update status endpoint, slot
 information in the response, and board endpoint availability (used by the

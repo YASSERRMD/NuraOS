@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Verify the NuraOS runtime mount layout matches the expected ephemeral/persistent split.
 #
 # Run this inside a live NuraOS VM or after booting the QEMU image:

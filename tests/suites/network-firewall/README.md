@@ -1,4 +1,4 @@
-# Suite T13 — network-firewall
+# Suite T13 - network-firewall
 
 Verifies that NuraOS enforces a secure-by-default network posture: loopback-only
 gateway binding, presence of the net.status tool, and the firewall configuration

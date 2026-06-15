@@ -86,6 +86,7 @@ fi
 mkdir -p "$(dirname "${LOG_FILE}")"
 
 # Base QEMU args shared by both boot modes.
+# shellcheck disable=SC2054  # commas are intentional QEMU syntax, not array separators
 QEMU_ARGS=(
     -machine q35,accel=tcg
     -cpu qemu64

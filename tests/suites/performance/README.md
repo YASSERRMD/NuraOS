@@ -1,4 +1,4 @@
-# Suite T15 — performance
+# Suite T15 - performance
 
 Measures endpoint latency and artifact size budgets to catch regressions in
 NuraOS responsiveness and image bloat.

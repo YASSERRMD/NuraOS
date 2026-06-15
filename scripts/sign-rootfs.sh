@@ -87,7 +87,7 @@ done
 # Build the manifest JSON and sign it via a small Go helper embedded here.
 # We use 'go run' with a heredoc program rather than a separate file.
 TMPDIR_GO=$(mktemp -d)
-trap "rm -rf ${TMPDIR_GO}" EXIT
+trap 'rm -rf "${TMPDIR_GO}"' EXIT
 
 cat > "${TMPDIR_GO}/main.go" << 'GOEOF'
 package main
