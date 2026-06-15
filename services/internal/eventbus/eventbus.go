@@ -23,8 +23,14 @@ const (
 	TypeDiskCritical    = "disk.critical"
 	TypeOOMKilled       = "oom.killed"
 	TypeClockStep       = "clock.step"
-	TypeProviderHealthy = "provider.healthy"
+	TypeProviderHealthy  = "provider.healthy"
 	TypeProviderDegraded = "provider.degraded"
+
+	// Inference resource governance events (phase 89).
+	TypeInferenceMemoryHigh   = "inference.memory.high"    // cgroup memory > 90% of limit
+	TypeInferenceMemoryOOM    = "inference.memory.oom"     // OOM kill in inference cgroup
+	TypeInferenceModelRefused = "inference.model.refused"  // model load refused by memory guard
+	TypeInferenceCPUStats     = "inference.cpu.stats"      // periodic resource stats snapshot
 )
 
 // DefaultSubBufSize is the number of events buffered per subscriber before

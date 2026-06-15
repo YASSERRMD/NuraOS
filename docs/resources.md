@@ -136,3 +136,84 @@ If the cgroup v2 filesystem is not mounted (e.g., kernel built without cgroup
 support, or running in a restricted container), all cgroup operations log a
 warning and continue. The services run without resource limits. The `/metrics`
 endpoint omits the `nura_cgroup_*` families when no cgroup data is available.
+
+---
+
+## Inference resource governance
+
+Inference (llama-server) is resource-governed to ensure that interactive
+requests to the gateway and agent remain responsive under heavy load.
+
+### Priority policy
+
+CPU scheduling priority is controlled by `cpu.weight` in the cgroup:
+
+| Service | `cpu.weight` | Role |
+|---------|-------------|------|
+| gateway | 400 | Serves interactive user requests (highest priority) |
+| nura-agent | 200 | Coordinates inference and routing |
+| llama-server | 100 | Background inference work (lowest priority) |
+
+When all three cgroups are CPU-contended, the kernel allocates CPU time
+proportionally to these weights. The gateway (400) receives 4x as much CPU
+as llama-server (100), ensuring health checks and API requests are never
+starved by an ongoing generation.
+
+### Memory limit for inference
+
+The llama-server cgroup has a default `memory.max = 4G`. This should be tuned
+to fit the largest model you intend to serve, leaving headroom for the OS and
+other services:
+
+```sh
+# Allow up to 8 GiB for a 7B parameter model:
+echo "memory_max = \"8G\"" >> /etc/nura/services/llama-server.toml
+# Then restart the manager.
+```
+
+At runtime the limit can be adjusted without a restart:
+
+```sh
+echo 8589934592 > /sys/fs/cgroup/nura.slice/llama-server.service/memory.max
+```
+
+### Memory guard for model loads
+
+Before loading a model, the inference governor checks whether the model's
+estimated RAM usage would push the cgroup over its `memory.max` limit:
+
+```
+projected = current_usage + model_ram_bytes
+if projected > memory.max:
+    refuse load, publish inference.model.refused event
+```
+
+This prevents OOM kills during model loading. The model RAM estimate is taken
+from the model manifest (`ram_bytes` field if present) or the file size.
+
+### Inference events on the event bus
+
+`nura-manager` runs an inference governor goroutine that polls the
+`llama-server` cgroup every 15 seconds and publishes the following event types:
+
+| Event type | When published |
+|-----------|---------------|
+| `inference.cpu.stats` | Every poll: CPU usage, memory current/max, OOM count |
+| `inference.memory.high` | Memory usage >= 90% of the cgroup limit |
+| `inference.memory.oom` | Any new OOM kill detected |
+| `inference.model.refused` | Model load refused by the memory guard |
+
+Subscribe via `nuractl events` to receive these in real time.
+
+### Inference metrics on /metrics
+
+The `nura_cgroup_*` Prometheus families already cover llama-server:
+
+```
+nura_cgroup_memory_bytes{service="llama-server"}
+nura_cgroup_memory_max_bytes{service="llama-server"}
+nura_cgroup_oom_kills_total{service="llama-server"}
+nura_cgroup_cpu_usage_seconds_total{service="llama-server"}
+```
+
+These are emitted on every `/metrics` request with no polling overhead.
