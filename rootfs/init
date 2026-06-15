@@ -33,6 +33,23 @@ mount -t devtmpfs devtmpfs /dev || die "failed to mount /dev"
 [ -c /dev/zero ]    || mknod -m 666 /dev/zero c 1 5
 [ -c /dev/urandom ] || mknod -m 444 /dev/urandom c 1 9
 
+# ----- mdev device manager -----
+# Register mdev as the kernel hotplug helper, then scan /sys to apply
+# permissions from /etc/mdev.conf and create symlinks for new devices.
+if command -v mdev >/dev/null 2>&1; then
+    echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || \
+        warn "failed to register mdev as hotplug helper"
+    mdev -s 2>/dev/null && log "mdev: initial /dev scan complete" || \
+        warn "mdev -s failed; permissions may not match /etc/mdev.conf"
+else
+    warn "mdev not found; hotplug support disabled"
+fi
+
+# Ensure devpts is mounted for PTY support.
+mkdir -p /dev/pts
+mount -t devpts -o gid=5,mode=620 devpts /dev/pts 2>/dev/null || \
+    warn "devpts mount failed"
+
 log "mounting cgroup2 on /sys/fs/cgroup ..."
 mkdir -p /sys/fs/cgroup
 mount -t cgroup2 -o nosuid,nodev,noexec none /sys/fs/cgroup 2>/dev/null || \
@@ -75,11 +92,43 @@ ip link set eth0 up 2>/dev/null && \
 [ -f /etc/resolv.conf ] || printf 'nameserver 10.0.2.3\nnameserver 8.8.8.8\n' > /etc/resolv.conf
 
 # ----- /data persistent partition -----
+# Determine the data block device.
+#
+# Detection order (first match wins):
+#   1. nura.data.dev=<name> on the kernel cmdline (explicit, deterministic)
+#   2. /dev/vdb  -- second virtio block device (QEMU default layout)
+#   3. /dev/sda  -- first SCSI disk (fallback for non-virtio configs)
+#   4. /dev/vda  -- first virtio disk (single-disk QEMU, last resort)
+#
+# The resolved device path is written to /run/nura-data-dev so that the
+# hotplug-block mdev script can mount /data when the disk appears late.
 DATA_DEV=""
-# Look for the first virtio block device that is not the root.
-for dev in /dev/vda /dev/vdb /dev/sda; do
-    [ -b "${dev}" ] && DATA_DEV="${dev}" && break
-done
+
+# Priority 1: explicit cmdline override.
+CMDLINE_DEV=$(echo "${CMDLINE}" | grep -oE 'nura\.data\.dev=[^ ]+' | \
+              sed 's/nura\.data\.dev=//' | head -1)
+if [ -n "${CMDLINE_DEV}" ]; then
+    case "${CMDLINE_DEV}" in
+    /dev/*) DATA_DEV="${CMDLINE_DEV}" ;;
+    *)      DATA_DEV="/dev/${CMDLINE_DEV}" ;;
+    esac
+    log "data device: using cmdline override ${DATA_DEV}"
+fi
+
+# Priority 2-4: automatic detection.
+if [ -z "${DATA_DEV}" ]; then
+    for dev in /dev/vdb /dev/sda /dev/vda; do
+        [ -b "${dev}" ] && DATA_DEV="${dev}" && break
+    done
+fi
+
+# Save resolved device for the hotplug-block mdev script.
+if [ -n "${DATA_DEV}" ]; then
+    printf '%s' "${DATA_DEV}" > /run/nura-data-dev
+    # Create deterministic /dev/nura-data symlink for consistent reference.
+    ln -sf "${DATA_DEV}" /dev/nura-data 2>/dev/null && \
+        log "device alias: /dev/nura-data -> ${DATA_DEV}"
+fi
 
 DATA_MOUNT_OPTS="data=ordered,barrier=1,noatime"
 
