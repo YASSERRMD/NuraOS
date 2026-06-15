@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/identity"
 	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/lifecycle"
 	"github.com/yasserrmd/nuraos/services/internal/resolver"
@@ -24,7 +25,8 @@ const defaultLogRatePerSec = 200
 // using the lifecycle Manager. A control socket is exposed for nuractl.
 // It blocks until SIGTERM/SIGINT, then performs ordered shutdown.
 func Run(dir string) error {
-	const journalDir = "/data/journal"
+	const dataDir = "/data"
+	const journalDir = dataDir + "/journal"
 
 	// Open journal first so the router can direct all log output there.
 	jw, jwErr := journal.NewWriter(journalDir, journal.DefaultMaxSize)
@@ -71,6 +73,20 @@ func Run(dir string) error {
 		log.Info("received signal", "signal", sig)
 		cancel()
 	}()
+
+	// System identity: machine-id and hostname (set before starting services).
+	machineID, idErr := identity.LoadOrCreate(dataDir)
+	if idErr != nil {
+		log.Warn("machine-id unavailable", "err", idErr)
+		machineID = "unknown-machine"
+	}
+	if hostname, herr := identity.LoadHostname(dataDir, machineID); herr == nil {
+		if sErr := identity.SetHostname(hostname); sErr != nil {
+			log.Warn("set hostname failed", "err", sErr)
+		} else {
+			log.Info("identity applied", "hostname", hostname, "machine_id", machineID)
+		}
+	}
 
 	// Time subsystem: RTC, timezone, optional NTP.
 	timeMgr := timesync.NewManager(log)

@@ -19,9 +19,9 @@ const DefaultDialTimeout = 500 * time.Millisecond
 
 // HealthResponse is returned by GET /health on the agent socket.
 type HealthResponse struct {
-	Status   string `json:"status"`           // "ok" | "starting" | "error"
-	Provider string `json:"provider"`          // active provider name
-	Uptime   int64  `json:"uptime_seconds"`    // seconds since agent started
+	Status   string `json:"status"`         // "ok" | "starting" | "error"
+	Provider string `json:"provider"`       // active provider name
+	Uptime   int64  `json:"uptime_seconds"` // seconds since agent started
 }
 
 // TurnRequest is sent to POST /turns on the agent socket (Phase 29).
@@ -36,13 +36,13 @@ type TurnRequest struct {
 
 // Message is a single conversation turn sent in a TurnRequest.
 type Message struct {
-	Role    string `json:"role"`    // "system" | "user" | "assistant"
+	Role    string `json:"role"` // "system" | "user" | "assistant"
 	Content string `json:"content"`
 }
 
 // TurnEvent is one SSE frame streamed back from POST /turns (Phase 29).
 type TurnEvent struct {
-	Type    string `json:"type"`             // "token" | "usage" | "done" | "error"
+	Type    string `json:"type"` // "token" | "usage" | "done" | "error"
 	Text    string `json:"text,omitempty"`
 	Message string `json:"message,omitempty"` // error message when Type == "error"
 }
@@ -74,7 +74,7 @@ type AgentMetrics struct {
 // StatusComponent is one component's readiness within a StatusResponse.
 type StatusComponent struct {
 	Name   string `json:"name"`
-	Status string `json:"status"`          // "ok" | "degraded" | "unknown"
+	Status string `json:"status"`           // "ok" | "degraded" | "unknown"
 	Detail string `json:"detail,omitempty"` // human-readable context
 }
 
@@ -83,5 +83,7 @@ type StatusResponse struct {
 	Overall    string            `json:"overall"` // "ok" | "degraded"
 	Version    string            `json:"version"`
 	Uptime     int64             `json:"uptime_seconds"`
+	MachineID  string            `json:"machine_id,omitempty"`
+	Hostname   string            `json:"hostname,omitempty"`
 	Components []StatusComponent `json:"components"`
 }

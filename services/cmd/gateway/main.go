@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/yasserrmd/nuraos/services/internal/identity"
 )
 
 // version is injected at build time:
@@ -59,6 +61,18 @@ func main() {
 	store := newMetricsStore()
 	h := newHandlers(agentSocket, store)
 	h.ts = ts // expose token store so /config can report auth_enabled
+
+	// System identity: stable machine-id and hostname.
+	dataDir := os.Getenv("NURA_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+	if mid, err := identity.LoadOrCreate(dataDir); err == nil {
+		h.machineID = mid
+		if hn, err := identity.LoadHostname(dataDir, mid); err == nil {
+			h.hostname = hn
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
