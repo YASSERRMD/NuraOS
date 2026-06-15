@@ -229,6 +229,11 @@ func readActiveSlot(dataDir string) (string, error) {
 	return slot, nil
 }
 
+// WriteActiveSlot atomically writes the active slot file.
+func WriteActiveSlot(dataDir, slot string) error {
+	return writeActiveSlot(dataDir, slot)
+}
+
 func writeActiveSlot(dataDir, slot string) error {
 	slotFile := filepath.Join(dataDir, "etc", "active-slot")
 	if err := os.MkdirAll(filepath.Dir(slotFile), 0o755); err != nil {
