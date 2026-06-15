@@ -41,6 +41,47 @@ Reports are written to `tests/reports/<suite>/`:
 - `<suite>-junit.xml` -- JUnit XML (GitHub Actions test annotations)
 - `<suite>-report.json` -- Full JSON report with per-case results and evidence paths
 
+## Result schema
+
+Every test case produces a `Result` (JSON):
+
+```json
+{
+  "run_id":            "a3f8c1d2e4b70912",
+  "commit_sha":        "5f99537...",
+  "suite":             "build-and-boot",
+  "case":              "healthz",
+  "status":            "fail",
+  "duration_ms":       234.5,
+  "message":           "/healthz returned 503 (want 200)",
+  "failure_signature": "8c3a1b2d4e5f6789",
+  "evidence": {
+    "bundle_dir":       "tests/reports/build-and-boot/healthz-evidence",
+    "serial_log_path":  "tests/reports/.../serial.log",
+    "journal_excerpt":  "...(last 100 lines of serial output)...",
+    "metrics_snapshot": "tests/reports/.../metrics.txt",
+    "config_dump":      "tests/reports/.../config.json"
+  }
+}
+```
+
+Key fields:
+
+| Field | Description |
+| --- | --- |
+| `run_id` | Random 16-char hex shared by all results in one `run-suite` invocation |
+| `commit_sha` | `git rev-parse HEAD` at run start |
+| `failure_signature` | `SHA-256(suite:case:Normalise(message))[:8]` -- stable across runs, used for GitHub issue dedup |
+| `evidence.bundle_dir` | Directory containing all captured files for this failure |
+| `evidence.journal_excerpt` | Last 100 lines of the serial log (inline) |
+
+The `failure_signature` normaliser strips timestamps, PIDs, hex addresses, and
+high-numbered port numbers from the message before hashing, so the same logical
+failure produces the same signature regardless of run-specific values.
+
+All evidence text is redacted before writing (API keys, Bearer tokens, and
+config secret values are replaced with `[REDACTED]`).
+
 ## Design principles
 
 - **No fixed sleeps.** `WaitReady` polls `/healthz` at 500 ms intervals.
