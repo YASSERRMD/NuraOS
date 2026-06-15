@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/journal"
 )
 
 // CtlHandler adapts a Manager to the ctlsock.Handler interface so the
@@ -83,9 +84,26 @@ func (h *CtlHandler) RestartService(name string) error {
 }
 
 // ServiceLogs implements ctlsock.Handler.
-// Phase 60 (journal) will wire real log access here; for now returns a placeholder.
 func (h *CtlHandler) ServiceLogs(name string, n int) ([]string, error) {
-	return []string{fmt.Sprintf("[journal not yet available - Phase 60 will wire logs for %s]", name)}, nil
+	jw := h.mgr.Journal()
+	if jw == nil {
+		return nil, fmt.Errorf("journal not available")
+	}
+	if n <= 0 {
+		n = 50
+	}
+	recs, err := journal.Tail(jw.Dir(), n, journal.Filter{
+		Service:     name,
+		MinPriority: journal.PriDebug,
+	})
+	if err != nil {
+		return nil, err
+	}
+	lines := make([]string, len(recs))
+	for i, r := range recs {
+		lines[i] = fmt.Sprintf("%s [%s] %s", r.Time.Format(time.RFC3339), r.Pri.String(), r.Message)
+	}
+	return lines, nil
 }
 
 // EnableService implements ctlsock.Handler.

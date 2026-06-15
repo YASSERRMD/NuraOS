@@ -61,7 +61,7 @@ func TestStateTransitionOneshot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	mgr := lifecycle.NewManager(logger())
+	mgr := lifecycle.NewManager(logger(), nil)
 	mgr.StartPlan(ctx, plan.Order)
 
 	// Give the process time to run.
@@ -114,7 +114,7 @@ func TestCrashLoopBreaker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
-	mgr := lifecycle.NewManager(logger())
+	mgr := lifecycle.NewManager(logger(), nil)
 	mgr.StartPlan(ctx, plan.Order)
 
 	// Wait enough for at least 3 crashes and the breaker to fire.
