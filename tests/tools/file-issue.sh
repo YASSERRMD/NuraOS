@@ -217,3 +217,29 @@ create_issue() {
         --body "${body}")
     echo "[file-issue] created issue: ${url}"
 }
+
+# ---------------------------------------------------------------------------
+# Append an occurrence comment to an existing issue
+# ---------------------------------------------------------------------------
+add_occurrence_comment() {
+    local issue_num="$1"
+    local run_line=""
+    [[ -n "${RUN_URL}" ]] && run_line="- **CI run:** ${RUN_URL}"
+
+    local body
+    body=$(printf '%s\n' \
+        "**Recurrence detected** -- ${DATE}" \
+        "" \
+        "- **Commit:** \`${COMMIT}\`" \
+        "- **Run ID:** \`${RUN_ID}\`" \
+        "${run_line}" \
+        "" \
+        "Error: ${MESSAGE}")
+
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "[dry-run] gh issue comment ${issue_num} --body <occurrence-comment>"
+        return
+    fi
+    gh issue comment "${issue_num}" --body "${body}"
+    echo "[file-issue] commented on #${issue_num}"
+}
