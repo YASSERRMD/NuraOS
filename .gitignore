@@ -81,3 +81,6 @@ secrets.toml
 # ---- CI / build caches ----
 .cache/
 sccache/
+
+# musl smoke test binaries
+rootfs/tests/hello
