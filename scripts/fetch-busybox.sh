@@ -63,15 +63,18 @@ cp "${BB_CONFIG}" "${SOURCE_DIR}/.config"
 
 # Build.
 log "building busybox (static musl) ..."
-# BusyBox's vendored kconfig does not expose the 'olddefconfig' target that
-# the Linux kernel Makefile adds. Pipe yes "" so that every prompt for a new
-# symbol not present in our config gets its default value automatically.
+# BusyBox's vendored kconfig does not expose 'olddefconfig'. Pipe yes "" into
+# oldconfig so every new symbol gets its default value without manual input.
+# pipefail is temporarily disabled because yes(1) exits with SIGPIPE (code 1)
+# after make closes the pipe; that exit code must not propagate as a failure.
+set +o pipefail
 yes "" | make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \
     LDFLAGS="-static" \
     CONFIG_STATIC=y \
     oldconfig
+set -o pipefail
 make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \
