@@ -86,6 +86,25 @@ if [ -f "${SUPERVISOR_SRC}" ]; then
     log "installed supervisor"
 fi
 
+# ----- nura-manager (Phase 56+) -----
+MANAGER_BIN="${REPO_ROOT}/rootfs/staging/sbin/nura-manager"
+if [ -f "${MANAGER_BIN}" ]; then
+    mkdir -p "${STAGING}/sbin"
+    install -m 755 "${MANAGER_BIN}" "${STAGING}/sbin/nura-manager"
+    log "installed nura-manager"
+fi
+
+# ----- Unit files -----
+UNIT_SRC="${REPO_ROOT}/rootfs/etc/nura/services"
+if [ -d "${UNIT_SRC}" ]; then
+    mkdir -p "${STAGING}/etc/nura/services"
+    for f in "${UNIT_SRC}"/*.toml; do
+        [ -f "${f}" ] || continue
+        install -m 644 "${f}" "${STAGING}/etc/nura/services/"
+        log "installed unit: $(basename "${f}")"
+    done
+fi
+
 # ----- nura-agent binary (installed by build-agent.sh) -----
 AGENT_BIN="${REPO_ROOT}/rootfs/staging/sbin/nura-agent"
 if [ -f "${AGENT_BIN}" ]; then
