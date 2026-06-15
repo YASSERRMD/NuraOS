@@ -376,6 +376,29 @@ func (h *handlers) updateStatusHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// telemetryStatusHandler serves GET /telemetry/status.
+// Reports whether telemetry is enabled, the local file path, the remote URL
+// (if configured), and the last payload written to the local file.
+func (h *handlers) telemetryStatusHandler(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epTelemetryStatus)
+
+	state := telemetryState{
+		Enabled:   telemetryEnabled(),
+		RemoteURL: telemetryRemoteURL(),
+		LocalFile: telemetryLocalFile(),
+	}
+
+	var lastPayload json.RawMessage
+	if data, err := os.ReadFile(state.LocalFile); err == nil {
+		lastPayload = json.RawMessage(data)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"telemetry":    state,
+		"last_payload": lastPayload,
+	})
+}
+
 // statusHandler serves GET /status with a human-readable JSON health summary.
 // Returns 200 when all components are ok; 503 when any component is degraded.
 func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {

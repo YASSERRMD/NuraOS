@@ -68,6 +68,7 @@ func main() {
 	mux.HandleFunc("GET /config", h.configHandler)
 	mux.HandleFunc("GET /models", h.modelsHandler)
 	mux.HandleFunc("GET /update/status", h.updateStatusHandler)
+	mux.HandleFunc("GET /telemetry/status", h.telemetryStatusHandler)
 
 	rl := newRateLimiter(defaultRPS, defaultBurst)
 	sem := make(chan struct{}, maxConcurrent)
@@ -115,6 +116,14 @@ func main() {
 			)
 		}
 	}()
+
+	// Optional privacy-preserving telemetry: NURA_TELEMETRY=1 starts the loop.
+	// The loop runs until the process exits; no explicit cancel is needed because
+	// the goroutine holds no resources beyond its ticker.
+	if telemetryEnabled() {
+		go startTelemetryLoop(context.Background(), store, defaultTelemetryInterval)
+		slog.Info("telemetry enabled", "local_file", telemetryLocalFile(), "remote", telemetryRemoteURL() != "")
+	}
 
 	// Optional pprof profiling endpoint: NURA_PPROF=1 starts a loopback-only
 	// HTTP server on port 6060 exposing /debug/pprof/* (no auth).
