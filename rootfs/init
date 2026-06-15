@@ -180,12 +180,20 @@ else
     cp /etc/resolv.conf /data/etc/resolv.conf 2>/dev/null || true
 fi
 
-# ----- Least-privilege setup (Phase 41) -----
-# The nura service account (uid=1000, gid=1000) owns writable service dirs.
-# /run holds the agent Unix socket; /data/logs and /data/sessions are writable.
-chown 1000:1000 /run /data/logs /data/sessions 2>/dev/null || \
-    warn "chown /run and /data dirs failed (busybox may not have chown or passwd)"
-chmod 750 /run /data/logs /data/sessions 2>/dev/null || true
+# ----- Least-privilege setup -----
+# Per-service ownership: each service owns only the dirs it writes to.
+# UIDs: nura-mgr=100, nura=1000, nura-gw=1001, llama=1002
+# /run: root-owned; service manager creates sockets there.
+chmod 755 /run 2>/dev/null || true
+# /data/journal: manager (root) writes here on behalf of all services.
+chmod 755 /data/journal 2>/dev/null || true
+# /data/logs and /data/sessions: owned by nura-agent (uid 1000).
+chown 1000:1000 /data/logs /data/sessions 2>/dev/null || \
+    warn "chown data dirs failed (users may not exist yet)"
+chmod 750 /data/logs /data/sessions 2>/dev/null || true
+# /data/models: root owns, llama group readable (gid 1002).
+chown 0:1002 /data/models 2>/dev/null || true
+chmod 750 /data/models 2>/dev/null || true
 
 # ----- Optional network self-test (off by default) -----
 if has_flag "nura.nettest=1"; then

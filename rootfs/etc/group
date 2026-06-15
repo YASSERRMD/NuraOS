@@ -1,2 +1,5 @@
 root:x:0:
+nura-mgr:x:100:
 nura:x:1000:
+nura-gw:x:1001:
+llama:x:1002:
