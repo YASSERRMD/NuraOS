@@ -3,6 +3,7 @@ pub mod context;
 pub mod error;
 pub mod logging;
 pub mod persona;
+pub mod provenance;
 pub mod provider;
 pub mod repl;
 pub mod routing;
