@@ -34,18 +34,21 @@ func loadGatewayToken(path string) string {
 }
 
 // bearerAuthMiddleware requires a valid Bearer token on all endpoints except
-// /healthz. When token is empty the middleware is a no-op (auth disabled).
-func bearerAuthMiddleware(next http.Handler, token string) http.Handler {
-	if token == "" {
-		return next
-	}
-	want := "Bearer " + token
+// /healthz. When the store's token is empty the middleware is a no-op (auth
+// disabled). The token is re-read from the store on every request so that a
+// SIGHUP reload takes effect without restarting.
+func bearerAuthMiddleware(next http.Handler, ts *tokenStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Header.Get("Authorization") != want {
+		tok := ts.get()
+		if tok == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+tok {
 			writeJSON(w, http.StatusUnauthorized,
 				map[string]string{"error": "unauthorized"})
 			return

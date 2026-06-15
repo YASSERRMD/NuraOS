@@ -57,8 +57,13 @@ func okHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func staticToken(tok string) *tokenStore {
+	ts := &tokenStore{token: tok}
+	return ts
+}
+
 func TestAuthMiddlewareDisabled(t *testing.T) {
-	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), "")
+	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), staticToken(""))
 	req := httptest.NewRequest(http.MethodGet, "/chat", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -68,7 +73,7 @@ func TestAuthMiddlewareDisabled(t *testing.T) {
 }
 
 func TestAuthMiddlewareRejectsUnauthorized(t *testing.T) {
-	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), "secret123")
+	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), staticToken("secret123"))
 	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -78,7 +83,7 @@ func TestAuthMiddlewareRejectsUnauthorized(t *testing.T) {
 }
 
 func TestAuthMiddlewareRejectsWrongToken(t *testing.T) {
-	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), "correct")
+	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), staticToken("correct"))
 	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
 	rr := httptest.NewRecorder()
@@ -89,7 +94,7 @@ func TestAuthMiddlewareRejectsWrongToken(t *testing.T) {
 }
 
 func TestAuthMiddlewareAcceptsValidToken(t *testing.T) {
-	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), "secret123")
+	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), staticToken("secret123"))
 	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
 	req.Header.Set("Authorization", "Bearer secret123")
 	rr := httptest.NewRecorder()
@@ -100,9 +105,8 @@ func TestAuthMiddlewareAcceptsValidToken(t *testing.T) {
 }
 
 func TestAuthMiddlewareHealthzExempt(t *testing.T) {
-	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), "secret123")
+	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), staticToken("secret123"))
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	// No Authorization header.
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -111,11 +115,66 @@ func TestAuthMiddlewareHealthzExempt(t *testing.T) {
 }
 
 func TestAuthMiddlewareSetsUnauthorizedBody(t *testing.T) {
-	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), "tok")
+	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), staticToken("tok"))
 	req := httptest.NewRequest(http.MethodGet, "/tools", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if !strings.Contains(rr.Body.String(), "unauthorized") {
 		t.Errorf("body %q: missing 'unauthorized'", rr.Body.String())
+	}
+}
+
+func TestTokenStoreHotReload(t *testing.T) {
+	path := writeSecretsFile(t, "gateway_token = \"initial\"\n")
+	ts := newTokenStore(path)
+	if got := ts.get(); got != "initial" {
+		t.Fatalf("want initial, got %q", got)
+	}
+	// Update the file and reload.
+	if err := os.WriteFile(path, []byte("gateway_token = \"rotated\"\n"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	ts.reload()
+	if got := ts.get(); got != "rotated" {
+		t.Errorf("want rotated, got %q", got)
+	}
+}
+
+func TestAuthMiddlewareReflectsReloadedToken(t *testing.T) {
+	path := writeSecretsFile(t, "gateway_token = \"v1\"\n")
+	ts := newTokenStore(path)
+	h := bearerAuthMiddleware(http.HandlerFunc(okHandler), ts)
+
+	// v1 token accepted.
+	req := httptest.NewRequest(http.MethodGet, "/tools", nil)
+	req.Header.Set("Authorization", "Bearer v1")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200 for v1 token, got %d", rr.Code)
+	}
+
+	// Rotate to v2 and reload.
+	if err := os.WriteFile(path, []byte("gateway_token = \"v2\"\n"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	ts.reload()
+
+	// v1 token now rejected.
+	req2 := httptest.NewRequest(http.MethodGet, "/tools", nil)
+	req2.Header.Set("Authorization", "Bearer v1")
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusUnauthorized {
+		t.Errorf("want 401 after rotation, got %d", rr2.Code)
+	}
+
+	// v2 token accepted.
+	req3 := httptest.NewRequest(http.MethodGet, "/tools", nil)
+	req3.Header.Set("Authorization", "Bearer v2")
+	rr3 := httptest.NewRecorder()
+	h.ServeHTTP(rr3, req3)
+	if rr3.Code != http.StatusOK {
+		t.Errorf("want 200 for v2 token, got %d", rr3.Code)
 	}
 }

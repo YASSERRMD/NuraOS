@@ -115,11 +115,60 @@ server {
 
 ## Secrets management
 
-- Provider API keys live in `/data/etc/secrets.toml` with mode `0600`.
-- Keys are loaded at agent startup; they are never logged.
-- To rotate a key: update the file and restart the agent
-  (`kill -HUP <nura-agent-pid>` or restart via supervisor).
-- Keys must not be committed to git; the `/data/` subtree is not tracked.
+### Permissions enforcement
+
+The agent aborts startup if `/data/etc/secrets.toml` is group- or
+world-readable (mode bits `0o044` set). The error message includes the
+remediation step:
+
+```
+secrets file /data/etc/secrets.toml is group- or world-readable;
+run 'chmod 600 /data/etc/secrets.toml' and restart
+```
+
+Create the file with the correct permissions from the start:
+
+```sh
+install -m 600 /dev/null /data/etc/secrets.toml
+echo 'gateway_token = "replace-with-long-random-string"' >> /data/etc/secrets.toml
+```
+
+### Environment-variable overrides
+
+Secrets may be supplied entirely via environment variables, avoiding a file
+on disk:
+
+| Variable | Overrides |
+|----------|-----------|
+| `ANTHROPIC_API_KEY` | `anthropic_api_key` in secrets.toml |
+| `OPENAI_API_KEY` | `openai_api_key` in secrets.toml |
+| `NURA_GATEWAY_TOKEN` | `gateway_token` in secrets.toml |
+
+Environment variables take precedence over file values. When both are present
+the env var wins.
+
+### Token rotation without restart (gateway)
+
+The gateway token can be rotated live without a full restart:
+
+1. Update `/data/etc/secrets.toml` with the new `gateway_token` value.
+2. Send `SIGHUP` to the gateway process:
+   ```sh
+   kill -HUP $(pidof gateway)
+   ```
+3. The gateway reloads the secrets file and begins enforcing the new token
+   immediately. In-flight requests are not interrupted.
+
+The supervisor (or the operator) can invalidate the old token and begin
+issuing the new one once the SIGHUP is confirmed via the log line:
+`"gateway token reloaded from secrets file"`.
+
+### What secrets must never enter
+
+- Logs (any level): `SecretString` redacts in `Debug` and `Display`.
+- Metrics labels or values: no secret-derived label is emitted.
+- Provenance log: content fields never include raw key material.
+- Crash dumps or panic output: `SecretString` has no raw-value `Drop`.
 
 ## Attack surface summary
 

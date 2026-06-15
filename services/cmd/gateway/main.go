@@ -40,9 +40,10 @@ func main() {
 		slog.Warn("LAN bind enabled; gateway is accessible from the network")
 	}
 
-	// Optional bearer-token auth loaded from secrets file.
-	token := loadGatewayToken(defaultSecretsPath)
-	if token != "" {
+	// Bearer-token auth: load from secrets file; reload on SIGHUP.
+	ts := newTokenStore(defaultSecretsPath)
+	ts.watchSIGHUP()
+	if ts.get() != "" {
 		slog.Info("gateway auth enabled")
 	}
 
@@ -65,14 +66,14 @@ func main() {
 	var handler http.Handler = mux
 	handler = concurrencyMiddleware(handler, sem, store)
 	handler = rateLimitMiddleware(handler, rl, store)
-	handler = bearerAuthMiddleware(handler, token)
+	handler = bearerAuthMiddleware(handler, ts)
 	handler = securityHeadersMiddleware(handler)
 
 	addr := host + ":" + port
 	slog.Info("nura-gateway starting",
 		"addr", addr,
 		"version", version,
-		"auth_enabled", token != "",
+		"auth_enabled", ts.get() != "",
 		"max_concurrent", maxConcurrent,
 		"rate_rps", defaultRPS,
 	)
