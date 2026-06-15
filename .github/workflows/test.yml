@@ -103,11 +103,27 @@ jobs:
       # Expose the apt-installed musl-gcc at the path fetch-busybox.sh expects.
       # Building musl from source via fetch-musl.sh is not needed in CI because
       # musl-tools (installed above) already provides a working musl-gcc.
+      # Also copy Linux kernel headers into musl's include tree: BusyBox init
+      # and libbb include <linux/vt.h>, <linux/capability.h>, etc., which are
+      # invisible to musl-gcc because it uses -nostdinc.  The system musl
+      # include tree at /usr/include/x86_64-linux-musl is not world-writable,
+      # so sudo is required.  Kernel headers contain no glibc symbols and
+      # cannot shadow musl's own C library headers.
       - name: Set up musl toolchain
         if: steps.cache.outputs.cache-hit != 'true' && success()
         run: |
           mkdir -p third_party/musl-install/bin
           ln -sf "$(command -v musl-gcc)" third_party/musl-install/bin/musl-gcc
+          MUSL_INC=/usr/include/x86_64-linux-musl
+          if [ ! -d "${MUSL_INC}/linux" ]; then
+            sudo cp -r /usr/include/linux       "${MUSL_INC}/linux"
+            sudo cp -r /usr/include/asm-generic "${MUSL_INC}/asm-generic" || true
+            if [ -d /usr/include/x86_64-linux-gnu/asm ]; then
+              sudo cp -r /usr/include/x86_64-linux-gnu/asm "${MUSL_INC}/asm"
+            elif [ -d /usr/include/asm ]; then
+              sudo cp -r /usr/include/asm "${MUSL_INC}/asm"
+            fi
+          fi
 
       - name: Fetch kernel source
         if: steps.cache.outputs.cache-hit != 'true' && success()
