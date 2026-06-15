@@ -39,6 +39,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 	"github.com/yasserrmd/nuraos/services/internal/pkgmgr"
+	"github.com/yasserrmd/nuraos/services/internal/update"
 )
 
 func main() {
@@ -110,6 +111,8 @@ func main() {
 		cmdDisable(client, rest[0], outputJSON)
 	case "reclaim":
 		cmdReclaim(outputJSON)
+	case "update":
+		cmdUpdate(rest, outputJSON)
 	case "pkg":
 		cmdPkg(rest, outputJSON)
 	case "events":
@@ -265,6 +268,86 @@ func cmdShutdown(c *ctlsock.Client, asJSON bool, reboot bool) {
 		fmt.Println(resp.Message)
 	} else {
 		fmt.Printf("%s initiated\n", label)
+	}
+}
+
+func cmdUpdate(args []string, asJSON bool) {
+	dataDir := os.Getenv("NURA_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+	rootfsDir := os.Getenv("NURA_ROOTFS_DIR")
+	if rootfsDir == "" {
+		rootfsDir = "/boot"
+	}
+	opts := update.Options{DataDir: dataDir, RootfsDir: rootfsDir}
+
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "nuractl update: subcommand required (apply|rollback|abort|log)")
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "apply":
+		if len(args) < 2 {
+			fatalf("update apply: local image file required")
+		}
+		imgPath := args[1]
+		expectedSHA := ""
+		for i := 2; i < len(args)-1; i++ {
+			if args[i] == "--sha256" {
+				expectedSHA = args[i+1]
+			}
+		}
+		f, err := os.Open(imgPath)
+		if err != nil {
+			fatalf("update apply: open image: %v", err)
+		}
+		defer f.Close()
+		tx, err := update.Apply(f, imgPath, expectedSHA, nil, nil, opts)
+		if err != nil {
+			fatalf("update apply: %v", err)
+		}
+		if asJSON {
+			printJSON(tx)
+			return
+		}
+		fmt.Printf("update committed: slot %s is now active\n", tx.TargetSlot)
+
+	case "rollback":
+		prev, err := update.RollbackLastUpdate(opts)
+		if err != nil {
+			fatalf("update rollback: %v", err)
+		}
+		if asJSON {
+			printJSON(map[string]string{"rolled_back_to": prev})
+			return
+		}
+		fmt.Printf("rolled back to slot %s\n", prev)
+
+	case "abort":
+		if err := update.Abort(opts); err != nil {
+			fatalf("update abort: %v", err)
+		}
+		if !asJSON {
+			fmt.Println("update transaction aborted")
+		}
+
+	case "log":
+		alog := update.NewAuditLog(dataDir)
+		entries, err := alog.Entries()
+		if err != nil {
+			fatalf("update log: %v", err)
+		}
+		if asJSON {
+			printJSON(entries)
+			return
+		}
+		for _, e := range entries {
+			fmt.Printf("%s  %-20s  %s  %s\n", e.Timestamp, e.Event, e.TxID, e.Detail)
+		}
+
+	default:
+		fatalf("update: unknown subcommand %q (apply|rollback|abort|log)", args[0])
 	}
 }
 
