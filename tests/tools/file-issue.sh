@@ -243,3 +243,75 @@ add_occurrence_comment() {
     gh issue comment "${issue_num}" --body "${body}"
     echo "[file-issue] commented on #${issue_num}"
 }
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+
+if [[ "${CLOSE_ON_GREEN}" -eq 1 ]]; then
+    # Recovery path: find the open issue by title and comment + optionally close.
+    if [[ "${STATUS}" != "pass" ]]; then
+        echo "[file-issue] warning: --close-on-green requires status=pass (got ${STATUS})" >&2
+        exit 0
+    fi
+
+    issue_num=$(find_open_issue_by_title "${SUITE}" "${CASE}")
+
+    if [[ -z "${issue_num}" ]]; then
+        echo "[file-issue] ${SUITE}/${CASE} recovered -- no open issue found, nothing to close"
+        exit 0
+    fi
+
+    echo "[file-issue] ${SUITE}/${CASE} recovered -- commenting on #${issue_num}"
+
+    run_line=""
+    [[ -n "${RUN_URL}" ]] && run_line="- **CI run:** ${RUN_URL}"
+    close_note=""
+    [[ "${AUTO_CLOSE}" -eq 1 ]] && close_note=" Closing issue."
+
+    recovery_body=$(printf '%s\n' \
+        "**Test recovered** -- ${DATE}${close_note}" \
+        "" \
+        "- **Commit:** \`${COMMIT}\`" \
+        "- **Run ID:** \`${RUN_ID}\`" \
+        "${run_line}")
+
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "[dry-run] gh issue comment ${issue_num} --body <recovery-comment>"
+        [[ "${AUTO_CLOSE}" -eq 1 ]] && echo "[dry-run] gh issue close ${issue_num}"
+        exit 0
+    fi
+
+    gh issue comment "${issue_num}" --body "${recovery_body}"
+    if [[ "${AUTO_CLOSE}" -eq 1 ]]; then
+        gh issue close "${issue_num}"
+        echo "[file-issue] issue #${issue_num} closed"
+    fi
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Failure path
+# ---------------------------------------------------------------------------
+
+if [[ "${STATUS}" != "fail" ]]; then
+    echo "[file-issue] status=${STATUS} -- nothing to file"
+    exit 0
+fi
+
+if [[ -z "${SIG}" ]]; then
+    echo "[file-issue] error: failure_signature is missing; run result through FinaliseResults first" >&2
+    exit 1
+fi
+
+echo "[file-issue] suite=${SUITE} case=${CASE} sig=${SIG}"
+
+issue_num=$(find_open_issue_by_sig "${SIG}")
+
+if [[ -n "${issue_num}" ]]; then
+    echo "[file-issue] existing issue #${issue_num} -- adding occurrence comment"
+    add_occurrence_comment "${issue_num}"
+else
+    echo "[file-issue] no existing issue -- creating new issue"
+    create_issue
+fi
