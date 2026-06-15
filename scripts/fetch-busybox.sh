@@ -95,12 +95,18 @@ yes "" | make -C "${SOURCE_DIR}" \
     CONFIG_STATIC=y \
     oldconfig
 set -o pipefail
-# Force-disable MTD tools: NANDDUMP selects NANDWRITE via kconfig 'select',
-# so it bypasses busybox.config=n and forces nandwrite.c to compile.
-# nandwrite.c needs mtd/mtd-user.h which is not in the musl include tree.
-# Patch the generated .config directly as belt-and-suspenders.
+# Force-disable MTD/UBI tools: these need mtd/mtd-user.h and mtd/ubi-user.h
+# which are not in the musl include tree (not installed by musl-tools).
+# NANDDUMP also selects NANDWRITE via kconfig 'select', so patch directly.
 sed -i "s/^CONFIG_NANDDUMP=[ym]/CONFIG_NANDDUMP=n/;
-        s/^CONFIG_NANDWRITE=[ym]/CONFIG_NANDWRITE=n/" "${SOURCE_DIR}/.config"
+        s/^CONFIG_NANDWRITE=[ym]/CONFIG_NANDWRITE=n/;
+        s/^CONFIG_UBIATTACH=[ym]/CONFIG_UBIATTACH=n/;
+        s/^CONFIG_UBIDETACH=[ym]/CONFIG_UBIDETACH=n/;
+        s/^CONFIG_UBIMKVOL=[ym]/CONFIG_UBIMKVOL=n/;
+        s/^CONFIG_UBIRMVOL=[ym]/CONFIG_UBIRMVOL=n/;
+        s/^CONFIG_UBIRSVOL=[ym]/CONFIG_UBIRSVOL=n/;
+        s/^CONFIG_UBIUPDATEVOL=[ym]/CONFIG_UBIUPDATEVOL=n/;
+        s/^CONFIG_UBIRENAME=[ym]/CONFIG_UBIRENAME=n/" "${SOURCE_DIR}/.config"
 make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \
