@@ -26,6 +26,7 @@ import (
 
 	"github.com/yasserrmd/nuraos/tests/harness"
 	"github.com/yasserrmd/nuraos/tests/reporters"
+	buildandboot "github.com/yasserrmd/nuraos/tests/suites/build-and-boot"
 )
 
 func main() {
@@ -77,9 +78,9 @@ func main() {
 type SuiteFunc func(ctx context.Context, inst *harness.QEMUInstance) []harness.Result
 
 // suiteRegistry maps suite names to their runner functions.
-// Phase T04 onward adds entries here as suites are built.
 var suiteRegistry = map[string]SuiteFunc{
-	"smoke": runSmokeFunc,
+	"smoke":          runSmokeFunc,
+	"build-and-boot": buildandboot.Run,
 }
 
 func availableSuites() []string {
