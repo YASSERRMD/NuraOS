@@ -28,7 +28,9 @@ func WaitReady(ctx context.Context, inst *QEMUInstance, timeout time.Duration) e
 		resp, err := client.Get(url) //nolint:noctx
 		if err == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			// 200 = gateway up, agent healthy.
+			// 503 = gateway up, agent degraded (expected in Phase 25 CI stub).
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusServiceUnavailable {
 				return nil
 			}
 		}

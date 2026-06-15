@@ -40,8 +40,9 @@ func caseHealthzContract(_ context.Context, inst *harness.QEMUInstance) harness.
 	if err != nil {
 		return fail("healthz-contract", fmt.Sprintf("GET /healthz error: %v", err))
 	}
-	if code != 200 {
-		return fail("healthz-contract", fmt.Sprintf("GET /healthz returned %d (want 200): %s", code, body))
+	// Accept 200 (healthy) or 503 (degraded); both are valid gateway responses with a JSON body.
+	if code != 200 && code != 503 {
+		return fail("healthz-contract", fmt.Sprintf("GET /healthz returned %d (want 200 or 503): %s", code, body))
 	}
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
@@ -50,7 +51,7 @@ func caseHealthzContract(_ context.Context, inst *harness.QEMUInstance) harness.
 	if _, ok := resp["status"]; !ok {
 		return fail("healthz-contract", fmt.Sprintf("GET /healthz JSON missing 'status' field; body=%s", body))
 	}
-	return pass("healthz-contract", fmt.Sprintf("GET /healthz=200 with status field: %v", resp["status"]))
+	return pass("healthz-contract", fmt.Sprintf("GET /healthz=%d with status field: %v", code, resp["status"]))
 }
 
 // ---------------------------------------------------------------------------
