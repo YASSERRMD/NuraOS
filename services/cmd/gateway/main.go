@@ -56,6 +56,7 @@ func main() {
 
 	store := newMetricsStore()
 	h := newHandlers(agentSocket, store)
+	h.ts = ts // expose token store so /config can report auth_enabled
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
@@ -64,6 +65,7 @@ func main() {
 	mux.HandleFunc("GET /tools", h.tools)
 	mux.HandleFunc("GET /metrics", h.metricsHandler)
 	mux.HandleFunc("GET /status", h.statusHandler)
+	mux.HandleFunc("GET /config", h.configHandler)
 
 	rl := newRateLimiter(defaultRPS, defaultBurst)
 	sem := make(chan struct{}, maxConcurrent)
