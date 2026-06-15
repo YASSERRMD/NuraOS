@@ -95,12 +95,10 @@ yes "" | make -C "${SOURCE_DIR}" \
     CONFIG_STATIC=y \
     oldconfig
 set -o pipefail
-# Force-disable applets that cannot compile in this environment, regardless
-# of what oldconfig may have set via default values or kconfig dependencies.
-# CONFIG_NANDWRITE needs mtd/mtd-user.h (not in the musl include tree).
-for sym in NANDWRITE; do
-    sed -i "s/^CONFIG_${sym}=[ym]/CONFIG_${sym}=n/" "${SOURCE_DIR}/.config"
-done
+# Force-disable NANDWRITE: kconfig selects it despite busybox.config=n because
+# of an internal dependency; nandwrite.c needs mtd/mtd-user.h which is not in
+# the musl include tree. Patch the generated .config directly after oldconfig.
+sed -i "s/^CONFIG_NANDWRITE=[ym]/CONFIG_NANDWRITE=n/" "${SOURCE_DIR}/.config"
 make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \
