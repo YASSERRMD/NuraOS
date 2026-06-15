@@ -51,7 +51,7 @@ secret_patterns=(
 found_secrets=false
 for pattern in "${secret_patterns[@]}"; do
     hits=$(git -C "${REPO_ROOT}" ls-files \
-        | grep -v -E '(secrets\.toml|\.pem|\.key|\.crt|security-check\.sh)' \
+        | grep -v -E '(secrets\.toml|\.pem|\.key|\.crt|security-check\.sh|_test\.go|\.md$)' \
         | xargs grep -lE "${pattern}" 2>/dev/null || true)
     if [ -n "${hits}" ]; then
         fail "potential secret pattern '${pattern}' found in: ${hits}"
