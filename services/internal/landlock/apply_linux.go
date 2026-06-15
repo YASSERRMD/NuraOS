@@ -18,6 +18,9 @@ const (
 // Landlock rule type.
 const landlockRulePathBeneath = 1
 
+// oPath is O_PATH (0x200000); not exported by Go's syscall package.
+const oPath = 0x200000
+
 // createRulesetVersion is passed as flags to probe the ABI version.
 const createRulesetVersion = 1 << 0
 
@@ -136,7 +139,7 @@ func Apply(p *Profile) error {
 
 // addPathRule opens path with O_PATH and adds a LANDLOCK_RULE_PATH_BENEATH rule.
 func addPathRule(rulesetFD int, path string, rights uint64) error {
-	fd, err := syscall.Open(path, syscall.O_PATH|syscall.O_CLOEXEC, 0)
+	fd, err := syscall.Open(path, oPath|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}

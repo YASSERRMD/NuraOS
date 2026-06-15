@@ -1,4 +1,4 @@
-# Suite T09 — provenance-security
+# Suite T09 - provenance-security
 
 Verifies that NuraOS build artifacts are accompanied by a valid provenance
 manifest, that secrets are not exposed on the console during boot, and that

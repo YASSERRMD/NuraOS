@@ -50,7 +50,7 @@ func caseGatewayLoopbackOnly(_ context.Context, inst *harness.QEMUInstance) harn
 	// The "bind" field may be nested under "gateway" or at the top level.
 	bindVal := extractBind(resp)
 	if bindVal == "" {
-		// bind field absent — skip rather than fail (field may not be exposed yet).
+		// bind field absent - skip rather than fail (field may not be exposed yet).
 		return skip("gateway-loopback-only", "bind field not found in /config; cannot verify loopback restriction")
 	}
 	if bindVal == "0.0.0.0" {
@@ -60,7 +60,7 @@ func caseGatewayLoopbackOnly(_ context.Context, inst *harness.QEMUInstance) harn
 	if bindVal == "127.0.0.1" {
 		return pass("gateway-loopback-only", "gateway bind=127.0.0.1 (loopback only)")
 	}
-	// Some other value (e.g. custom address) — accept as non-open.
+	// Some other value (e.g. custom address) - accept as non-open.
 	return pass("gateway-loopback-only", fmt.Sprintf("gateway bind=%q (not 0.0.0.0)", bindVal))
 }
 

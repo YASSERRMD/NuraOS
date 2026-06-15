@@ -38,7 +38,7 @@ if [[ "${UNINSTALL}" -eq 1 ]]; then
 fi
 
 if [[ ! -d "${HOOK_DIR}" ]]; then
-    echo "[install-hook] .git/hooks not found — are you in a git repo?" >&2
+    echo "[install-hook] .git/hooks not found - are you in a git repo?" >&2
     exit 1
 fi
 

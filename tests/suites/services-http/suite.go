@@ -114,7 +114,7 @@ func caseAuthRequired(_ context.Context, inst *harness.QEMUInstance) harness.Res
 		!strings.Contains(configBody, `"auth_enabled": true`) {
 		return skip("auth-required", "auth_enabled is false or absent in /config; skipping auth check")
 	}
-	// Auth is enabled — make an unauthenticated request to a protected endpoint.
+	// Auth is enabled - make an unauthenticated request to a protected endpoint.
 	code, body, err := inst.HTTP().GetBody("/chat")
 	if err != nil {
 		return fail("auth-required", fmt.Sprintf("GET /chat (unauthenticated) error: %v", err))
@@ -185,7 +185,7 @@ func caseRateLimitHeaders(_ context.Context, inst *harness.QEMUInstance) harness
 			return pass("rate-limit-headers", fmt.Sprintf("POST /chat carries X-RateLimit-* headers (status=%d)", resp.StatusCode))
 		}
 	}
-	// Rate limiting may not trigger without a loaded model — accept any non-5xx.
+	// Rate limiting may not trigger without a loaded model - accept any non-5xx.
 	if lastCode >= 500 {
 		return fail("rate-limit-headers", fmt.Sprintf("POST /chat returned server error %d after %d attempts; body=%s", lastCode, attempts, lastBody))
 	}

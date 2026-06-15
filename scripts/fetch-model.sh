@@ -11,8 +11,6 @@
 # MODEL_URL and MODEL_NAME env vars override the defaults.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-
 # -- defaults (overridable via env) --
 DEFAULT_MODEL_NAME="smollm2-1.7b-instruct-q4_k_m"
 DEFAULT_MODEL_URL="https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf"

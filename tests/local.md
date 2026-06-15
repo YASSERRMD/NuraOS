@@ -69,18 +69,18 @@ e2e
 
 ## How the runner works
 
-1. **Prerequisite check** — `go`, `qemu-system-x86_64`, and `jq` must be on
+1. **Prerequisite check** - `go`, `qemu-system-x86_64`, and `jq` must be on
    `PATH`. The script exits immediately if any are missing.
-2. **Image check** — If all four image artefacts
+2. **Image check** - If all four image artefacts
    (`bzImage`, `initramfs.cpio.gz`, `nura.img`, `data.img`) exist in
    `image/out/`, the build is skipped. Pass `--build-image` to rebuild.
-3. **Harness build** — `go build -trimpath -o tests/run-suite ./cmd/run-suite`
+3. **Harness build** - `go build -trimpath -o tests/run-suite ./cmd/run-suite`
    is run once. Subsequent invocations reuse the cached binary unless
    `--rebuild` is passed.
-4. **Suite execution** — Each suite is run via
+4. **Suite execution** - Each suite is run via
    `tests/run-suite <suite>` in order. Suites are sequential locally (unlike
    CI which runs them in parallel). Each suite boots its own QEMU instance.
-5. **Report accumulation** — Each suite writes its results to
+5. **Report accumulation** - Each suite writes its results to
    `tests/reports/<suite>/<suite>-report.json`. Pass `--merge` to aggregate
    all suites into `tests/reports/merged-report.json`.
 

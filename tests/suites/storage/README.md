@@ -1,4 +1,4 @@
-# Suite T10 — storage
+# Suite T10 - storage
 
 Verifies the NuraOS persistent data layer: artifact existence, ext4 mount
 behaviour, and gateway accessibility to the models directory.

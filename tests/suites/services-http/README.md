@@ -1,4 +1,4 @@
-# Suite T08 — services-http
+# Suite T08 - services-http
 
 Verifies HTTP API contract compliance for all major NuraOS gateway endpoints.
 

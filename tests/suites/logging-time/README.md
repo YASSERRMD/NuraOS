@@ -1,4 +1,4 @@
-# Suite T11 — logging-time
+# Suite T11 - logging-time
 
 Verifies that NuraOS emits well-structured, timestamped log output through the
 serial console and exposes uptime metrics via Prometheus.

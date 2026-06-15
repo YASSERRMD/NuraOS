@@ -122,10 +122,10 @@ func caseChatModelRequired(_ context.Context, inst *harness.QEMUInstance) harnes
 	case 200:
 		return pass("chat-model-required", "POST /chat=200 (model loaded and responded)")
 	case 503:
-		// Model not loaded — this is the expected state in CI without a model blob.
+		// Model not loaded - this is the expected state in CI without a model blob.
 		return skip("chat-model-required", "POST /chat=503 (model not loaded); skipping")
 	case 400:
-		// Gateway rejected the request (no model field) — acceptable gateway behaviour.
+		// Gateway rejected the request (no model field) - acceptable gateway behaviour.
 		return pass("chat-model-required",
 			fmt.Sprintf("POST /chat=400 (gateway validation active): %s", strings.TrimSpace(body)))
 	default:

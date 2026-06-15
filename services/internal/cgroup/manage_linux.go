@@ -115,10 +115,10 @@ func (m *Manager) WatchOOM(ctx context.Context, service string, log *slog.Logger
 				log.Error("OOM kill detected in service cgroup",
 					"service", service, "oom_kills", n, "new_kills", delta)
 				if jw != nil {
-					_ = jw.WriteEntry(journal.Entry{
-						Service:  service,
-						Priority: journal.PriError,
-						Message:  fmt.Sprintf("cgroup OOM kill: %d new kill(s) (total %d)", delta, n),
+					_ = jw.Write(journal.Record{
+						Service: service,
+						Pri:     journal.PriError,
+						Message: fmt.Sprintf("cgroup OOM kill: %d new kill(s) (total %d)", delta, n),
 					})
 				}
 			}

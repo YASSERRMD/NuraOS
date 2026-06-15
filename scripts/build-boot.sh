@@ -151,11 +151,11 @@ else
     log "mtools not found; using loop device (may require sudo)"
     LOOP_DEV=$(losetup --find --show --offset "${PART_OFFSET}" \
         --sizelimit "${PART_SIZE_BYTES}" "${DISK_IMG}")
-    trap "losetup -d ${LOOP_DEV} 2>/dev/null || true" EXIT
+    trap 'losetup -d "${LOOP_DEV}" 2>/dev/null || true' EXIT
     mkfs.vfat -F 16 -n NURAB "${LOOP_DEV}"
     MNT_DIR=$(mktemp -d)
     mount -t vfat "${LOOP_DEV}" "${MNT_DIR}"
-    trap "umount ${MNT_DIR} 2>/dev/null || true; losetup -d ${LOOP_DEV} 2>/dev/null || true" EXIT
+    trap 'umount "${MNT_DIR}" 2>/dev/null || true; losetup -d "${LOOP_DEV}" 2>/dev/null || true' EXIT
     cp "${KERNEL}"    "${MNT_DIR}/bzImage"
     cp "${INITRAMFS}" "${MNT_DIR}/initramfs.cpio.gz"
     cp "${BOOT_DIR}/extlinux.conf" "${MNT_DIR}/extlinux.conf"

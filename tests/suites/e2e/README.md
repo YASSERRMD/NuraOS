@@ -1,4 +1,4 @@
-# Suite T16 — e2e
+# Suite T16 - e2e
 
 Full end-to-end system liveness check. Exercises every major gateway endpoint
 in sequence. Intended as the final gate in a CI pipeline.
