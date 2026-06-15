@@ -36,6 +36,7 @@ import (
 	"strings"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/delta"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 	"github.com/yasserrmd/nuraos/services/internal/pkgmgr"
@@ -346,8 +347,71 @@ func cmdUpdate(args []string, asJSON bool) {
 			fmt.Printf("%s  %-20s  %s  %s\n", e.Timestamp, e.Event, e.TxID, e.Detail)
 		}
 
+	case "delta-generate":
+		if len(args) < 4 {
+			fatalf("update delta-generate <old-image> <new-image> <out.nudelta>")
+		}
+		oldData, err := os.ReadFile(args[1])
+		if err != nil {
+			fatalf("read old image: %v", err)
+		}
+		newData, err := os.ReadFile(args[2])
+		if err != nil {
+			fatalf("read new image: %v", err)
+		}
+		out, err := os.Create(args[3])
+		if err != nil {
+			fatalf("create delta file: %v", err)
+		}
+		defer out.Close()
+		stats, err := delta.Generate(out, oldData, newData, 0)
+		if err != nil {
+			fatalf("generate delta: %v", err)
+		}
+		if asJSON {
+			printJSON(stats)
+			return
+		}
+		fmt.Printf("delta generated: %d copied, %d new blocks, %.1f%% bandwidth saving\n",
+			stats.CopiedBlocks, stats.NewBlocks, stats.SavingsPct())
+
+	case "delta-apply":
+		if len(args) < 3 {
+			fatalf("update delta-apply <delta.nudelta> <src-slot-image> [--fallback full-image]")
+		}
+		deltaPath := args[1]
+		srcSlotPath := args[2]
+		fallbackPath := ""
+		for i := 3; i < len(args)-1; i++ {
+			if args[i] == "--fallback" {
+				fallbackPath = args[i+1]
+			}
+		}
+		df, err := os.Open(deltaPath)
+		if err != nil {
+			fatalf("open delta file: %v", err)
+		}
+		defer df.Close()
+		var fallbackReader *os.File
+		if fallbackPath != "" {
+			fallbackReader, err = os.Open(fallbackPath)
+			if err != nil {
+				fatalf("open fallback image: %v", err)
+			}
+			defer fallbackReader.Close()
+		}
+		tx, err := update.ApplyDelta(df, fallbackReader, srcSlotPath, deltaPath, "", nil, nil, opts)
+		if err != nil {
+			fatalf("delta-apply: %v", err)
+		}
+		if asJSON {
+			printJSON(tx)
+			return
+		}
+		fmt.Printf("delta applied: slot %s is now active\n", tx.TargetSlot)
+
 	default:
-		fatalf("update: unknown subcommand %q (apply|rollback|abort|log)", args[0])
+		fatalf("update: unknown subcommand %q (apply|rollback|abort|log|delta-generate|delta-apply)", args[0])
 	}
 }
 

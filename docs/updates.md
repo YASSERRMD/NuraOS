@@ -139,3 +139,77 @@ for direct slot manipulation. For transactional updates with verification, use
 
 The shell scripts are appropriate for emergency manual slot switches or
 development workflows where verification is not required.
+
+---
+
+## Delta updates
+
+Delta updates ship only the changed blocks between two image versions, reducing
+download size. Model blobs under `/data/models` are never part of the OS rootfs
+image and are excluded automatically.
+
+### Delta format (.nudelta)
+
+```
+Header (82 bytes, big-endian):
+  magic[8]       "NURADELT"
+  version[2]     1
+  block_size[4]  block size in bytes (default 4096)
+  src_sha256[32] SHA-256 of the source (current) image
+  dst_sha256[32] SHA-256 of the target (new) image
+  op_count[4]    number of operations
+
+Operations:
+  type[1]        0 = COPY (reuse source block)  1 = DATA (new block content)
+  target_idx[4]  target block index
+  if COPY: src_idx[4]
+  if DATA: length[4] + data[length]
+```
+
+COPY operations reference source blocks by index; only DATA operations carry
+new bytes. For an 80% unchanged image, a delta is approximately 20% the size
+of the full image.
+
+### Generating a delta
+
+```sh
+# On the build machine:
+nuractl update delta-generate rootfs-old.ext4 rootfs-new.ext4 update.nudelta
+
+# Example output:
+# delta generated: 6400 copied, 1600 new blocks, 80.0% bandwidth saving
+```
+
+### Applying a delta
+
+```sh
+# Apply delta; fall back to full image on any verification failure.
+nuractl update delta-apply update.nudelta /boot/rootfs-a.ext4 \
+    --fallback rootfs-new.ext4
+```
+
+The fallback image is applied automatically when:
+- Delta source SHA-256 does not match the current slot image.
+- Reconstructed image SHA-256 does not match the delta target.
+- Delta data is corrupt.
+
+### Verification
+
+1. Delta source SHA-256 is checked against the current slot image before
+   applying any operations.
+2. The reconstructed image SHA-256 is verified against the delta target SHA-256
+   before committing to the boot slot.
+3. A mismatch at step 1 or 2 triggers the fallback path (if provided) or returns
+   an error without touching any boot slot.
+
+### Bandwidth savings measurement
+
+`nuractl update delta-generate` logs:
+
+```
+delta generated: N copied, M new blocks, P% bandwidth saving
+```
+
+`P%` = `(1 - new_data_bytes / full_target_bytes) * 100`.
+
+With `--json` the full stats struct is emitted for programmatic consumption.
