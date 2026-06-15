@@ -3,7 +3,7 @@ description = "llama.cpp inference server"
 exec        = "/sbin/llama-server"
 args        = ["--host", "127.0.0.1", "--port", "8081", "--log-disable"]
 type        = "longrun"
-user        = "root"
+user        = "llama"
 enabled     = true
 
 [restart]

@@ -326,35 +326,55 @@ initialises the expected subdirectories (`models/`, `etc/`, etc.).
 
 ---
 
-## Least-privilege model (Phase 41)
+## Least-privilege model
 
 ### Service accounts
 
-| Account | uid | gid | Shell        | Purpose                  |
-|---------|-----|-----|--------------|--------------------------|
-| root    | 0   | 0   | /bin/sh      | PID 1 supervisor only    |
-| nura    | 1000| 1000| /bin/false   | nura-agent and gateway   |
+Each service runs as its own unprivileged account. The service manager (nura-manager)
+runs as root during boot so it can set hostnames, mount filesystems, and spawn child
+processes as different users (requires CAP_SETUID). This is the only process justified
+to run as root in steady state.
 
-The `nura` account has no login shell and no password. Only `root`
-(the supervisor) can `su` to it.
+| Account  | UID  | GID  | Shell       | Runs                        |
+|----------|------|------|-------------|----------------------------|
+| root     | 0    | 0    | /bin/sh     | PID 1 init + service manager |
+| nura-mgr | 100  | 100  | /bin/false  | (reserved for future use)   |
+| nura     | 1000 | 1000 | /bin/false  | nura-agent (AI agent)       |
+| nura-gw  | 1001 | 1001 | /bin/false  | nura-gateway (HTTP gateway) |
+| llama    | 1002 | 1002 | /bin/false  | llama-server (inference)    |
+
+No account has a password or login shell. `/etc/shadow` is mode 640 (root-readable only).
 
 ### Ownership layout
 
-| Path           | Owner    | Mode | Notes                              |
-|----------------|----------|------|------------------------------------|
-| /run/          | nura     | 750  | Unix socket for IPC lives here     |
-| /data/logs/    | nura     | 750  | Service log files                  |
-| /data/sessions/| nura     | 750  | Conversation session data          |
-| /data/models/  | root     | 755  | Model files (read-only for nura)   |
-| /data/etc/     | root     | 755  | Config files (read-only for nura)  |
-| /sbin/         | root     | 755  | Binaries owned by root             |
+| Path             | Owner       | Mode | Reason                                    |
+|------------------|-------------|------|-------------------------------------------|
+| /run/            | root        | 755  | Service manager creates sockets here      |
+| /data/journal/   | root        | 755  | Manager writes journal on behalf of all   |
+| /data/logs/      | nura (1000) | 750  | Agent writes log files                    |
+| /data/sessions/  | nura (1000) | 750  | Agent writes session provenance           |
+| /data/models/    | root:llama  | 750  | llama-server reads models; no other write |
+| /data/etc/       | root        | 755  | Config readable by all services           |
+| /sbin/           | root        | 755  | OS binaries; no service writes here       |
 
 ### Privilege drop sequence
 
-1. `/init` (root) mounts filesystems and sets up ownership via `chown 1000:1000`.
-2. The supervisor (root) starts each service via `su -s /bin/sh nura -c "exec /sbin/<svc>"`.
-3. `su` drops to uid=1000, gid=1000 before exec-ing the binary.
-4. Neither nura-agent nor gateway ever runs with any capabilities beyond what uid=1000 has.
+1. `/init` (root) mounts filesystems and sets directory ownership.
+2. The supervisor (root) launches `nura-manager run` as root.
+3. `nura-manager` reads unit files and for each service calls
+   `su -s /bin/sh <user> -c "exec /sbin/<binary>"` before exec'ing the process.
+4. `su` drops to the service's UID/GID before the binary starts.
+5. In steady state: nura-agent runs as uid=1000, nura-gateway as uid=1001,
+   llama-server as uid=1002. No network-facing service runs as root.
 
-If `su` is absent or the `nura` account is missing at boot, services fall back
+If `su` is absent or a service account is missing at boot, the service falls back
 to running as root with a logged warning.
+
+### Steady-state audit
+
+```
+nura-manager run   PID ?   UID 0    (justified: needs CAP_SETUID to spawn children)
+nura-agent         PID ?   UID 1000 (no capabilities)
+nura-gateway       PID ?   UID 1001 (no capabilities)
+llama-server       PID ?   UID 1002 (no capabilities)
+```

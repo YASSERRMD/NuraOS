@@ -68,6 +68,16 @@ tmpfs    /run   tmpfs    mode=755,nosuid,nodev  0 0
 tmpfs    /var   tmpfs    mode=755,nosuid,nodev  0 0
 EOF
 
+# User/group/shadow database.
+for f in passwd group shadow; do
+    SRC="${REPO_ROOT}/rootfs/etc/${f}"
+    if [ -f "${SRC}" ]; then
+        install -m 644 "${SRC}" "${STAGING}/etc/${f}"
+    fi
+done
+# shadow must not be world-readable.
+chmod 640 "${STAGING}/etc/shadow" 2>/dev/null || true
+
 # udhcpc DHCP client script.
 UDHCPC_SCRIPT="${REPO_ROOT}/rootfs/etc/udhcpc/default.script"
 if [ -f "${UDHCPC_SCRIPT}" ]; then
