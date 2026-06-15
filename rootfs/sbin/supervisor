@@ -1,0 +1,201 @@
+#!/bin/sh
+# /sbin/supervisor -- NuraOS service supervisor (PID 1 after /init exec's us).
+#
+# Responsibilities:
+#  - Start services in declared order with health checks between stages.
+#  - Monitor services and restart them on crash with capped exponential backoff.
+#  - Forward SIGTERM to all children for clean shutdown.
+#  - Reap zombie children (BusyBox sh at PID 1 calls waitpid implicitly).
+#  - Log structured boot stages to console and /data/logs/boot.log.
+#  - Recovery mode: nura.recovery=1 on cmdline bypasses service start.
+
+LOG_FILE=/data/logs/boot.log
+STAGE_FILE=/tmp/supervisor.stage
+
+# BusyBox init/supervisor max restart attempts per service.
+MAX_RESTARTS=5
+RESTART_DELAY_INIT=1   # seconds; doubled each retry up to 30
+RESTART_DELAY_MAX=30
+
+log() {
+    TS=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
+    MSG="[supervisor] ${TS} $*"
+    echo "${MSG}"
+    echo "${MSG}" >> "${LOG_FILE}" 2>/dev/null || true
+}
+
+stage() {
+    log "STAGE: $*"
+    echo "$*" > "${STAGE_FILE}"
+}
+
+die() {
+    log "FATAL: $*"
+    log "dropping to emergency shell"
+    exec sh
+}
+
+# Read kernel cmdline for flags.
+read -r CMDLINE < /proc/cmdline 2>/dev/null || CMDLINE=""
+has_flag() { echo "${CMDLINE}" | grep -qw "$1"; }
+
+# Ensure log directory exists.
+mkdir -p /data/logs 2>/dev/null || true
+
+# Clean up previous stage file.
+rm -f "${STAGE_FILE}" 2>/dev/null || true
+
+log "supervisor starting (PID $$)"
+
+# ----- Signal handling -----
+SHUTDOWN=0
+
+cleanup() {
+    SHUTDOWN=1
+    log "SIGTERM received; shutting down services"
+    stage "shutdown"
+
+    # Send SIGTERM to all managed PIDs.
+    for name in llama_server nura_agent gateway; do
+        eval "pid=\${${name}_pid:-}"
+        if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+            log "stopping ${name} (PID ${pid})"
+            kill -TERM "${pid}" 2>/dev/null || true
+        fi
+    done
+
+    # Give services up to 5 seconds to exit.
+    i=0
+    while [ "${i}" -lt 5 ]; do
+        all_gone=1
+        for name in llama_server nura_agent gateway; do
+            eval "pid=\${${name}_pid:-}"
+            if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+                all_gone=0
+                break
+            fi
+        done
+        [ "${all_gone}" -eq 1 ] && break
+        sleep 1
+        i=$((i + 1))
+    done
+
+    log "flushing logs and halting"
+    sync
+    halt -f 2>/dev/null || poweroff -f 2>/dev/null || true
+}
+
+trap cleanup TERM INT
+
+# ----- Recovery mode -----
+if has_flag "nura.recovery=1"; then
+    log "recovery mode: skipping service start"
+    stage "recovery"
+    log "dropping to recovery shell (exit to restart supervisor)"
+    exec sh
+fi
+
+# ----- Helper: wait for an HTTP healthcheck -----
+wait_healthy() {
+    local name="$1"
+    local url="$2"
+    local timeout="${3:-30}"
+    local elapsed=0
+
+    log "waiting for ${name} health at ${url} (timeout ${timeout}s) ..."
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        if wget -q -O /dev/null "${url}" 2>/dev/null; then
+            log "${name}: healthy"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    log "WARNING: ${name} health timeout after ${timeout}s; continuing anyway"
+    return 1
+}
+
+# ----- Helper: start a service with restart logic -----
+start_service() {
+    local name="$1"
+    shift
+    local cmd="$*"
+    local restarts=0
+    local delay="${RESTART_DELAY_INIT}"
+
+    while [ "${SHUTDOWN}" -eq 0 ]; do
+        log "starting ${name}: ${cmd}"
+        ${cmd} &
+        pid=$!
+        eval "${name}_pid=${pid}"
+        log "${name} started (PID ${pid})"
+
+        # Wait for the process to exit.
+        wait "${pid}" 2>/dev/null
+        exit_code=$?
+
+        [ "${SHUTDOWN}" -eq 1 ] && return 0
+
+        log "${name} exited (code ${exit_code})"
+        restarts=$((restarts + 1))
+
+        if [ "${restarts}" -ge "${MAX_RESTARTS}" ]; then
+            log "WARNING: ${name} has crashed ${restarts} times; backing off"
+            sleep "${RESTART_DELAY_MAX}"
+            restarts=0
+            delay="${RESTART_DELAY_INIT}"
+            continue
+        fi
+
+        log "restarting ${name} in ${delay}s (attempt ${restarts}/${MAX_RESTARTS}) ..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+        [ "${delay}" -gt "${RESTART_DELAY_MAX}" ] && delay="${RESTART_DELAY_MAX}"
+    done
+}
+
+# Service PIDs (set by start_service).
+llama_server_pid=""
+nura_agent_pid=""
+gateway_pid=""
+
+# ----- Boot stages -----
+
+stage "stage1-llama-server"
+if [ -x /sbin/llama-server ]; then
+    start_service llama_server \
+        /sbin/llama-server --model /data/models/active.gguf --host 127.0.0.1 --port 8081 &
+    wait_healthy llama-server http://127.0.0.1:8081/health 60 || true
+else
+    log "llama-server not installed yet (Phase 16+); skipping"
+fi
+
+stage "stage2-nura-agent"
+if [ -x /sbin/nura-agent ]; then
+    start_service nura_agent /sbin/nura-agent run &
+    wait_healthy nura-agent http://127.0.0.1:7070/healthz 30 || true
+else
+    log "nura-agent not installed yet (Phase 11+); dropping to shell for now"
+    stage "no-agent-shell"
+    log "Type 'poweroff' or 'halt' to exit."
+    exec sh
+fi
+
+stage "stage3-gateway"
+if [ -x /sbin/gateway ]; then
+    start_service gateway /sbin/gateway &
+else
+    log "gateway not installed yet (Phase 28+); skipping"
+fi
+
+stage "running"
+log "all services started; supervisor monitoring"
+
+# Main loop: reap zombies and wait for shutdown.
+while [ "${SHUTDOWN}" -eq 0 ]; do
+    # wait -n would be ideal but is not available in all BusyBox sh versions.
+    # Use a short sleep; zombie reaping happens automatically in BusyBox sh PID 1.
+    sleep 5
+done
+
+log "supervisor: clean exit"

@@ -78,9 +78,16 @@ fi
 # via devtmpfs at boot, but we add console/null as a failsafe.
 # (We cannot use mknod here without root; the cpio header carries device info)
 
+# ----- Supervisor -----
+SUPERVISOR_SRC="${REPO_ROOT}/rootfs/sbin/supervisor"
+if [ -f "${SUPERVISOR_SRC}" ]; then
+    mkdir -p "${STAGING}/sbin"
+    install -m 755 "${SUPERVISOR_SRC}" "${STAGING}/sbin/supervisor"
+    log "installed supervisor"
+fi
+
 # ----- Build additional staged files (agent, gateway, llama-server) -----
 # Future phases install their binaries here.
-# Phase 07: only busybox + init.
 for extra_dir in sbin; do
     mkdir -p "${STAGING}/${extra_dir}"
 done
