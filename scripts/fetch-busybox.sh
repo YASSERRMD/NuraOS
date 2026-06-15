@@ -95,6 +95,12 @@ yes "" | make -C "${SOURCE_DIR}" \
     CONFIG_STATIC=y \
     oldconfig
 set -o pipefail
+# Force-disable applets that cannot compile in this environment, regardless
+# of what oldconfig may have set via default values or kconfig dependencies.
+# CONFIG_NANDWRITE needs mtd/mtd-user.h (not in the musl include tree).
+for sym in NANDWRITE; do
+    sed -i "s/^CONFIG_${sym}=[ym]/CONFIG_${sym}=n/" "${SOURCE_DIR}/.config"
+done
 make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \

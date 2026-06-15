@@ -72,7 +72,7 @@ func (w *Writer) Write(r Record) error {
 		return err
 	}
 
-	go w.enforceCap()
+	w.enforceCap()
 	return nil
 }
 
