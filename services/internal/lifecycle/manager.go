@@ -243,6 +243,7 @@ func (m *Manager) launchSocketUnit(ctx context.Context, u *unit.Unit, holder *so
 		} else {
 			args = append([]string{u.Exec}, u.Args...)
 		}
+		args = wrapWithSeccomp(args, u)
 
 		cmd := exec.CommandContext(runCtx, args[0], args[1:]...)
 		saAttr := &syscall.SysProcAttr{Setpgid: true}
@@ -486,6 +487,7 @@ func (m *Manager) spawnProcess(ctx context.Context, u *unit.Unit) (*exec.Cmd, <-
 	} else {
 		args = append([]string{u.Exec}, u.Args...)
 	}
+	args = wrapWithSeccomp(args, u)
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	procAttr := &syscall.SysProcAttr{Setpgid: true}

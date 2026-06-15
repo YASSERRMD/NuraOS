@@ -28,3 +28,7 @@ timeout = 30
 
 [namespaces]
 ipc = true
+
+[seccomp]
+profile = "/etc/nura/seccomp/nura-agent.toml"
+mode    = "enforce"

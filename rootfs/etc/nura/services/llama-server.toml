@@ -28,3 +28,7 @@ timeout = 120
 mount   = true
 ipc     = true
 uts     = true
+
+[seccomp]
+profile = "/etc/nura/seccomp/llama-server.toml"
+mode    = "enforce"
