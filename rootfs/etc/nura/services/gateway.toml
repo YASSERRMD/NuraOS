@@ -17,7 +17,9 @@ crash_loop_window = 60
 crash_loop_backoff = 120
 
 [resources]
-cpu_weight = 100
+# Gateway gets the highest CPU weight so interactive user requests are never
+# starved by ongoing inference work in the llama-server cgroup.
+cpu_weight = 400
 memory_max = "128M"
 
 [readiness]

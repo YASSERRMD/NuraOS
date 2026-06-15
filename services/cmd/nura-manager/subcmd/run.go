@@ -15,6 +15,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 	"github.com/yasserrmd/nuraos/services/internal/identity"
+	"github.com/yasserrmd/nuraos/services/internal/inferencegovernor"
 	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/lifecycle"
 	"github.com/yasserrmd/nuraos/services/internal/resolver"
@@ -205,6 +206,11 @@ func Run(dir string) error {
 		},
 	}
 	go diskMon.Run(ctx)
+
+	// Inference governor: polls llama-server cgroup, publishes memory events,
+	// and enforces the memory guard for model loads.
+	gov := inferencegovernor.New(bus, log)
+	go gov.Run(ctx)
 
 	mgr := lifecycle.NewManager(log, jw)
 	mgr.SetBus(bus)

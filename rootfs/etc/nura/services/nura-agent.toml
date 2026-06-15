@@ -18,7 +18,9 @@ crash_loop_window = 60
 crash_loop_backoff = 120
 
 [resources]
-cpu_weight = 100
+# Agent gets a medium CPU weight: lower than the gateway (400) but higher than
+# llama-server (100), so it can coordinate responses without being preempted.
+cpu_weight = 200
 memory_max = "256M"
 
 [readiness]
