@@ -61,6 +61,24 @@ tar -C "${REPO_ROOT}/third_party" -xjf "${TARBALL}"
 [ -f "${BB_CONFIG}" ] || die "BusyBox config not found: ${BB_CONFIG}"
 cp "${BB_CONFIG}" "${SOURCE_DIR}/.config"
 
+# Provide Linux kernel headers to musl's include tree.
+# BusyBox init and libbb use <linux/vt.h>, <linux/capability.h>, etc.
+# musl-gcc builds with -nostdinc so those headers are invisible unless we
+# copy them into the musl install's own include tree (which is always on
+# the search path).  Kernel headers are ABI-only and do not contain glibc
+# symbols, so merging them here does not pollute musl's C library headers.
+MUSL_INC="${INSTALL_DIR}/include"
+if [ -d /usr/include/linux ] && [ ! -d "${MUSL_INC}/linux" ]; then
+    log "copying Linux kernel headers into musl include tree ..."
+    cp -r /usr/include/linux       "${MUSL_INC}/linux"
+    cp -r /usr/include/asm-generic "${MUSL_INC}/asm-generic" 2>/dev/null || true
+    if [ -d /usr/include/x86_64-linux-gnu/asm ]; then
+        cp -r /usr/include/x86_64-linux-gnu/asm "${MUSL_INC}/asm"
+    elif [ -d /usr/include/asm ]; then
+        cp -r /usr/include/asm "${MUSL_INC}/asm"
+    fi
+fi
+
 # Build.
 log "building busybox (static musl) ..."
 # BusyBox's vendored kconfig does not expose 'olddefconfig'. Pipe yes "" into
