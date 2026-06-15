@@ -1,0 +1,273 @@
+name: NuraOS Integration Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Nightly at 02:00 UTC.
+    - cron: "0 2 * * *"
+
+# A new push to the same ref cancels any in-flight run for that ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write   # required by file-issue.sh on main / nightly runs
+
+env:
+  GO_VERSION: "1.23.4"
+  # Controls whether failures trigger real GitHub issue creation.
+  # PRs annotate-only (dry-run); main and nightly runs file issues.
+  NURA_FILE_ISSUES: ${{ github.event_name != 'pull_request' && 'true' || 'false' }}
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Build the NuraOS image (kernel + initramfs + data.img) and cache it.
+  # The cache key is a fingerprint of all source files that feed the build,
+  # so unchanged source reuses the cached image without rebuilding.
+  # -----------------------------------------------------------------------
+  build-image:
+    name: Build NuraOS image
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image cache key
+        id: cache-key
+        run: |
+          KEY=$(find scripts/ agent/ services/ rootfs/ \
+                -type f -not -path '*/.git/*' | sort \
+                | xargs sha256sum 2>/dev/null | sha256sum | cut -c1-16)
+          echo "key=nuraos-image-v1-${KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore image from cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: image/out/
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - name: Set up Go (for gateway build)
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: services/go.mod
+
+      - name: Cache cargo registry
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install Rust toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.87.0"
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex \
+            libssl-dev libelf-dev \
+            cpio gzip musl-tools \
+            cmake ninja-build libclang-dev \
+            e2fsprogs
+
+      - name: Build NuraOS image
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-image.sh
+
+  # -----------------------------------------------------------------------
+  # Compile the Go test harness binary once; the matrix jobs reuse it via
+  # upload/download-artifact to avoid redundant builds.
+  # -----------------------------------------------------------------------
+  build-harness:
+    name: Build test harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: tests/go.mod
+
+      - name: Build run-suite
+        run: |
+          cd tests
+          go build -trimpath -o run-suite ./cmd/run-suite
+
+      - name: Upload harness binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-suite
+          path: tests/run-suite
+          retention-days: 1
+
+  # -----------------------------------------------------------------------
+  # Suite matrix: one job per subsystem suite, all run in parallel.
+  # Failures are isolated -- a broken suite does not block the others.
+  # -----------------------------------------------------------------------
+  suite:
+    name: Suite / ${{ matrix.suite }}
+    needs: [build-image, build-harness]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - build-and-boot
+          - agent-core
+          - providers
+          - tools
+          - services-http
+          - provenance-security
+          - storage
+          - logging-time
+          - devices-power
+          - network-firewall
+          - updates
+          - performance
+          - e2e
+    env:
+      SUITE: ${{ matrix.suite }}
+      NURA_REPO_ROOT: ${{ github.workspace }}
+      NURA_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      # Remote-provider cases read these; skip (not fail) when absent.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore NuraOS image from cache
+        uses: actions/cache@v4
+        with:
+          path: image/out/
+          key: ${{ needs.build-image.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - name: Download harness binary
+        uses: actions/download-artifact@v4
+        with:
+          name: run-suite
+          path: tests/
+
+      - name: Make harness executable
+        run: chmod +x tests/run-suite
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+
+      - name: Run suite
+        id: run-suite
+        run: tests/run-suite "${SUITE}"
+        continue-on-error: true
+
+      - name: Upload suite artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-${{ matrix.suite }}
+          path: |
+            tests/reports/${{ matrix.suite }}/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Write job summary
+        if: always()
+        run: |
+          REPORT="tests/reports/${SUITE}/${SUITE}-report.json"
+          if [[ ! -f "${REPORT}" ]]; then
+            echo "### Suite: ${SUITE}" >> "$GITHUB_STEP_SUMMARY"
+            echo "No report generated (suite may have failed to boot)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          PASS=$(jq '[.results[] | select(.status=="pass")] | length' "${REPORT}")
+          FAIL=$(jq '[.results[] | select(.status=="fail")] | length' "${REPORT}")
+          SKIP=$(jq '[.results[] | select(.status=="skip")] | length' "${REPORT}")
+          TOTAL=$((PASS + FAIL + SKIP))
+          echo "### Suite: \`${SUITE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total | Pass | Fail | Skip |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|------|------|------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ${TOTAL} | ${PASS} | ${FAIL} | ${SKIP} |" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${FAIL}" -gt 0 ]]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "#### Failing cases" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.results[] | select(.status=="fail") |
+              "- **\(.case)**: \(.message // "no message")"' \
+              "${REPORT}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # File a GitHub issue for each failing result (main / nightly only).
+      - name: File issues for failures
+        if: steps.run-suite.outcome == 'failure' && env.NURA_FILE_ISSUES == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPORT="tests/reports/${SUITE}/${SUITE}-report.json"
+          [[ -f "${REPORT}" ]] || exit 0
+          jq -c '.results[] | select(.status=="fail")' "${REPORT}" \
+          | while IFS= read -r result; do
+              tmp=$(mktemp /tmp/nura-result-XXXXXX.json)
+              printf '%s' "${result}" > "${tmp}"
+              NURA_RUN_URL="${NURA_RUN_URL}" \
+                tests/tools/file-issue.sh "${tmp}" || true
+              rm -f "${tmp}"
+            done
+
+      # On PRs: dry-run the issue filer so the log shows what would be filed.
+      - name: Annotate (dry-run issue filer for PRs)
+        if: steps.run-suite.outcome == 'failure' && env.NURA_FILE_ISSUES == 'false'
+        run: |
+          REPORT="tests/reports/${SUITE}/${SUITE}-report.json"
+          [[ -f "${REPORT}" ]] || exit 0
+          jq -c '.results[] | select(.status=="fail")' "${REPORT}" \
+          | while IFS= read -r result; do
+              tmp=$(mktemp /tmp/nura-result-XXXXXX.json)
+              printf '%s' "${result}" > "${tmp}"
+              NURA_RUN_URL="${NURA_RUN_URL}" \
+                tests/tools/file-issue.sh --dry-run "${tmp}" || true
+              rm -f "${tmp}"
+            done
+
+      # Close matching issues when a suite that previously filed them goes green.
+      - name: Close resolved issues (main / nightly)
+        if: steps.run-suite.outcome == 'success' && env.NURA_FILE_ISSUES == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPORT="tests/reports/${SUITE}/${SUITE}-report.json"
+          [[ -f "${REPORT}" ]] || exit 0
+          jq -c '.results[] | select(.status=="pass")' "${REPORT}" \
+          | while IFS= read -r result; do
+              tmp=$(mktemp /tmp/nura-result-XXXXXX.json)
+              printf '%s' "${result}" > "${tmp}"
+              NURA_RUN_URL="${NURA_RUN_URL}" \
+                tests/tools/file-issue.sh --close-on-green "${tmp}" || true
+              rm -f "${tmp}"
+            done
+
+      # Propagate suite failure as job failure (after all steps run).
+      - name: Fail job on suite failure
+        if: steps.run-suite.outcome == 'failure'
+        run: exit 1
