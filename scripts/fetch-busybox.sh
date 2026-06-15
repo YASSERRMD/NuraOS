@@ -68,7 +68,7 @@ make -C "${SOURCE_DIR}" \
     HOSTCC=gcc \
     LDFLAGS="-static" \
     CONFIG_STATIC=y \
-    oldconfig
+    olddefconfig
 make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \

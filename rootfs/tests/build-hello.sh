@@ -1,11 +1,11 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Build the hello-world musl smoke test and verify it is fully static.
 #
 # Usage: ./rootfs/tests/build-hello.sh
 
-set -euo pipefail
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CC_MUSL="${REPO_ROOT}/scripts/cc-musl.sh"
 SRC="${SCRIPT_DIR}/hello.c"

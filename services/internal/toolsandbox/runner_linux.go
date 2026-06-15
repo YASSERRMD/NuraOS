@@ -68,7 +68,6 @@ func (r *Runner) Run(ctx context.Context, grant Grant, toolPath string, args ...
 	// Requires CAP_SYS_ADMIN; fails gracefully if unprivileged.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWIPC,
-		NoNewPrivs: true,
 		Pdeathsig:  syscall.SIGKILL,
 	}
 
@@ -102,7 +101,7 @@ func (r *Runner) Run(ctx context.Context, grant Grant, toolPath string, args ...
 				"tool", grant.Name, "err", err)
 			cmd2 := exec.CommandContext(ctx, self, argv...)
 			cmd2.Env = cmd.Env
-			cmd2.SysProcAttr = &syscall.SysProcAttr{NoNewPrivs: true}
+			cmd2.SysProcAttr = &syscall.SysProcAttr{}
 			cmd2.Stdout = &stdout
 			cmd2.Stderr = &stderr
 			if err2 := cmd2.Start(); err2 != nil {
