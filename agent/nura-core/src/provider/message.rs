@@ -69,10 +69,11 @@ impl Message {
 }
 
 /// The reason inference stopped.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     /// Model reached a natural end-of-turn.
+    #[default]
     EndOfTurn,
     /// The max-token budget was exhausted.
     MaxTokens,
