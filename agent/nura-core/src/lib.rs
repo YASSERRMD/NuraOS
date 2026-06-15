@@ -7,4 +7,5 @@ pub mod routing;
 pub mod secrets;
 pub mod stream;
 pub mod telemetry;
+pub mod tool;
 pub mod version;
