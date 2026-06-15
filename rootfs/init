@@ -36,6 +36,16 @@ mount -t devtmpfs devtmpfs /dev || die "failed to mount /dev"
 log "mounting tmpfs on /tmp ..."
 mount -t tmpfs tmpfs /tmp
 
+log "mounting tmpfs on /run ..."
+mkdir -p /run
+mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run
+
+log "mounting tmpfs on /var ..."
+mkdir -p /var
+mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /var
+# FHS compat: /var/run is a symlink to /run.
+ln -sf /run /var/run
+
 # ----- Recovery mode -----
 if has_flag "nura.recovery=1"; then
     log "recovery flag set; dropping to emergency shell"
@@ -101,10 +111,20 @@ else
     mkdir -p /data/models /data/logs /data/sessions /data/etc /data/journal
 fi
 
+# ----- Bind persistent paths from /data -----
+# resolv.conf: restore from /data on boot; save current value there for next boot.
+if [ -f /data/etc/resolv.conf ]; then
+    mount --bind /data/etc/resolv.conf /etc/resolv.conf 2>/dev/null && \
+        log "resolv.conf: restored from /data/etc/resolv.conf" || \
+        warn "resolv.conf: bind mount failed; using in-memory copy"
+else
+    # Save current resolv.conf so it survives the next reboot.
+    cp /etc/resolv.conf /data/etc/resolv.conf 2>/dev/null || true
+fi
+
 # ----- Least-privilege setup (Phase 41) -----
 # The nura service account (uid=1000, gid=1000) owns writable service dirs.
 # /run holds the agent Unix socket; /data/logs and /data/sessions are writable.
-mkdir -p /run
 chown 1000:1000 /run /data/logs /data/sessions 2>/dev/null || \
     warn "chown /run and /data dirs failed (busybox may not have chown or passwd)"
 chmod 750 /run /data/logs /data/sessions 2>/dev/null || true
@@ -121,6 +141,14 @@ if has_flag "nura.nettest=1"; then
         warn "network self-test: no default gateway found"
     fi
 fi
+
+# ----- Log mount layout -----
+log "mount layout:"
+log "  / (initramfs)  -- read-only by convention; OS binaries not written at runtime"
+log "  /run  tmpfs    -- ephemeral: Unix sockets, PIDs (reset on reboot)"
+log "  /tmp  tmpfs    -- ephemeral: scratch space (reset on reboot)"
+log "  /var  tmpfs    -- ephemeral: FHS runtime state (reset on reboot)"
+log "  /data ext4     -- persistent: models, journal, sessions, config, secrets"
 
 # ----- Hand off to supervisor -----
 SUPERVISOR=/sbin/supervisor

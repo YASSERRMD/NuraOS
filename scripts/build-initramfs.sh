@@ -30,7 +30,7 @@ rm -rf "${STAGING}"
 mkdir -p "${STAGING}"
 
 # ----- Directory layout -----
-for d in bin sbin etc proc sys dev data tmp; do
+for d in bin sbin etc proc sys dev data tmp run var; do
     mkdir -p "${STAGING}/${d}"
 done
 
@@ -60,10 +60,12 @@ install -m 755 "${REPO_ROOT}/rootfs/init" "${STAGING}/init"
 log "creating /etc skeleton ..."
 echo "nuraos" > "${STAGING}/etc/hostname"
 cat > "${STAGING}/etc/fstab" <<'EOF'
-proc     /proc  proc     defaults  0 0
-sysfs    /sys   sysfs    defaults  0 0
-devtmpfs /dev   devtmpfs defaults  0 0
-tmpfs    /tmp   tmpfs    defaults  0 0
+proc     /proc  proc     defaults           0 0
+sysfs    /sys   sysfs    defaults           0 0
+devtmpfs /dev   devtmpfs defaults           0 0
+tmpfs    /tmp   tmpfs    defaults           0 0
+tmpfs    /run   tmpfs    mode=755,nosuid,nodev  0 0
+tmpfs    /var   tmpfs    mode=755,nosuid,nodev  0 0
 EOF
 
 # udhcpc DHCP client script.
