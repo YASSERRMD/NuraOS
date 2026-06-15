@@ -10,4 +10,6 @@ path = "src/main.rs"
 
 [dependencies]
 nura-core = { path = "../nura-core" }
+serde_json = "1"
 tracing = "0.1"
+ureq = { version = "2.10", default-features = false }
