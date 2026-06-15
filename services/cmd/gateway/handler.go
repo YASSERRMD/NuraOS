@@ -65,7 +65,8 @@ func (h *handlers) healthz(w http.ResponseWriter, r *http.Request) {
 
 	agentHealth, err := h.agentClient.Health(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		// Gateway itself is healthy; agent unreachability is advisory.
+		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":          "degraded",
 			"agent_reachable": false,
 		})

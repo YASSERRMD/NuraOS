@@ -103,7 +103,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// rather than stdio. This lets us both capture boot output and send
 	// REPL commands programmatically.
 	args := []string{
-		"-machine", "q35,accel=tcg",
+		"-machine", "q35,accel=kvm:tcg",
 		"-cpu", "qemu64",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
