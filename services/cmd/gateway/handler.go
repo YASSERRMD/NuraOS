@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/agent"
 )
@@ -16,13 +17,18 @@ const maxChatBodyBytes = 64 * 1024
 
 type handlers struct {
 	agentClient *agent.Client
+	store       *MetricsStore
 }
 
-func newHandlers(socketPath string) *handlers {
-	return &handlers{agentClient: agent.New(socketPath, socketProbeTO)}
+func newHandlers(socketPath string, store *MetricsStore) *handlers {
+	return &handlers{
+		agentClient: agent.New(socketPath, socketProbeTO),
+		store:       store,
+	}
 }
 
 func (h *handlers) healthz(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epHealthz)
 	ctx, cancel := context.WithTimeout(r.Context(), 2*socketProbeTO)
 	defer cancel()
 
@@ -42,6 +48,7 @@ func (h *handlers) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) version(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epVersion)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"service": "nura-gateway",
 		"version": version,
@@ -49,6 +56,9 @@ func (h *handlers) version(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) chat(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epChat)
+	start := time.Now()
+
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		writeJSON(w, http.StatusUnsupportedMediaType,
 			map[string]string{"error": "Content-Type must be application/json"})
@@ -140,12 +150,14 @@ func (h *handlers) chat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if readErr != nil {
+			h.store.recordChatLatency(time.Since(start))
 			return
 		}
 	}
 }
 
 func (h *handlers) tools(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epTools)
 	ctx := r.Context()
 	toolsResp, err := h.agentClient.Tools(ctx)
 	if err != nil {
@@ -154,4 +166,71 @@ func (h *handlers) tools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toolsResp)
+}
+
+// metricsHandler serves GET /metrics in Prometheus text exposition format.
+// Agent metrics are fetched from the agent socket and appended; if the agent
+// is unreachable only gateway-native counters are emitted.
+func (h *handlers) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epMetrics)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*socketProbeTO)
+	defer cancel()
+
+	agentMet, err := h.agentClient.Metrics(ctx)
+	var agentMetPtr *agent.AgentMetrics
+	if err == nil {
+		agentMetPtr = &agentMet
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	h.store.WriteTo(w, agentMetPtr)
+}
+
+// statusHandler serves GET /status with a human-readable JSON health summary.
+// Returns 200 when all components are ok; 503 when any component is degraded.
+func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epStatus)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*socketProbeTO)
+	defer cancel()
+
+	components := []agent.StatusComponent{
+		{Name: "gateway", Status: "ok", Detail: "version " + version},
+	}
+
+	agentComp := agent.StatusComponent{Name: "agent"}
+	agentHealth, err := h.agentClient.Health(ctx)
+	if err != nil {
+		agentComp.Status = "degraded"
+		agentComp.Detail = "unreachable"
+	} else {
+		agentComp.Status = agentHealth.Status
+		if agentHealth.Provider != "" {
+			agentComp.Detail = "provider=" + agentHealth.Provider
+		}
+	}
+	components = append(components, agentComp)
+
+	overall := "ok"
+	for _, c := range components {
+		if c.Status != "ok" {
+			overall = "degraded"
+			break
+		}
+	}
+
+	resp := agent.StatusResponse{
+		Overall:    overall,
+		Version:    version,
+		Uptime:     h.store.uptimeSeconds(),
+		Components: components,
+	}
+
+	code := http.StatusOK
+	if overall != "ok" {
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, resp)
 }

@@ -86,3 +86,23 @@ func (c *Client) Tools(ctx context.Context) (ToolsResponse, error) {
 	var t ToolsResponse
 	return t, json.NewDecoder(resp.Body).Decode(&t)
 }
+
+// Metrics calls GET /metrics on the agent socket and returns the agent's
+// operational counters. Returns an error if the agent is unreachable or
+// does not yet expose this endpoint; callers should degrade gracefully.
+func (c *Client) Metrics(ctx context.Context) (AgentMetrics, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/metrics", nil)
+	if err != nil {
+		return AgentMetrics{}, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return AgentMetrics{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return AgentMetrics{}, fmt.Errorf("agent /metrics returned %d", resp.StatusCode)
+	}
+	var m AgentMetrics
+	return m, json.NewDecoder(resp.Body).Decode(&m)
+}

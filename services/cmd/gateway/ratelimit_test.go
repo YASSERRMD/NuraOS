@@ -35,7 +35,7 @@ func TestRateLimiterSeparateIPsIndependent(t *testing.T) {
 
 func TestRateLimitMiddlewareHealthzExempt(t *testing.T) {
 	rl := newRateLimiter(0, 0) // effectively blocks everything
-	h := rateLimitMiddleware(http.HandlerFunc(okHandler), rl)
+	h := rateLimitMiddleware(http.HandlerFunc(okHandler), rl, nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.RemoteAddr = "192.0.2.1:9999"
 	rr := httptest.NewRecorder()
@@ -48,7 +48,7 @@ func TestRateLimitMiddlewareHealthzExempt(t *testing.T) {
 func TestRateLimitMiddlewareBlocks(t *testing.T) {
 	rl := newRateLimiter(1.0, 1)
 	rl.allow("192.0.2.3") // exhaust the single token
-	h := rateLimitMiddleware(http.HandlerFunc(okHandler), rl)
+	h := rateLimitMiddleware(http.HandlerFunc(okHandler), rl, nil)
 	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
 	req.RemoteAddr = "192.0.2.3:1234"
 	rr := httptest.NewRecorder()
@@ -63,7 +63,7 @@ func TestRateLimitMiddlewareBlocks(t *testing.T) {
 
 func TestConcurrencyMiddlewareAllows(t *testing.T) {
 	sem := make(chan struct{}, 2)
-	h := concurrencyMiddleware(http.HandlerFunc(okHandler), sem)
+	h := concurrencyMiddleware(http.HandlerFunc(okHandler), sem, nil)
 	req := httptest.NewRequest(http.MethodGet, "/tools", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -75,7 +75,7 @@ func TestConcurrencyMiddlewareAllows(t *testing.T) {
 func TestConcurrencyMiddlewareBlocks(t *testing.T) {
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{} // fill the only slot
-	h := concurrencyMiddleware(http.HandlerFunc(okHandler), sem)
+	h := concurrencyMiddleware(http.HandlerFunc(okHandler), sem, nil)
 	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -86,7 +86,7 @@ func TestConcurrencyMiddlewareBlocks(t *testing.T) {
 
 func TestConcurrencyMiddlewareHealthzExempt(t *testing.T) {
 	sem := make(chan struct{}, 0) // cap 0: always "full"
-	h := concurrencyMiddleware(http.HandlerFunc(okHandler), sem)
+	h := concurrencyMiddleware(http.HandlerFunc(okHandler), sem, nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

@@ -65,6 +65,18 @@ func fakeAgentMux() *http.ServeMux {
 		})
 	})
 
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(agent.AgentMetrics{
+			TokensIn:         100,
+			TokensOut:        50,
+			TurnsTotal:       2,
+			UptimeSeconds:    10,
+			ToolCallsTotal:   map[string]int64{"system.info": 1},
+			ProviderRequests: map[string]int64{"local": 2},
+		})
+	})
+
 	return mux
 }
 
