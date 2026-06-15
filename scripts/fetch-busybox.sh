@@ -80,6 +80,7 @@ make -C "${SOURCE_DIR}" \
     HOSTCC=gcc \
     LDFLAGS="-static" \
     CONFIG_STATIC=y \
+    EXTRA_CFLAGS="-isystem /usr/include" \
     -j"$(nproc 2>/dev/null || echo 4)"
 
 BB_BIN="${SOURCE_DIR}/busybox"
