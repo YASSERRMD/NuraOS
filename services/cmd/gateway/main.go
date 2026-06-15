@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/identity"
 )
@@ -83,6 +84,9 @@ func main() {
 	}
 	h.diskMon = diskMon
 	go diskMon.Run(context.Background())
+
+	// Cgroup reader: reads per-service resource stats from /sys/fs/cgroup.
+	h.cgMgr = cgroup.NewManager()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)

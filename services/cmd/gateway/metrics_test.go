@@ -54,7 +54,7 @@ func TestMetricsStoreNilSafe(t *testing.T) {
 		t.Errorf("nil uptimeSeconds: want 0, got %d", got)
 	}
 	var sb strings.Builder
-	m.WriteTo(&sb, nil, nil) // must not panic
+	m.WriteTo(&sb, nil, nil, nil) // must not panic
 	if !strings.Contains(sb.String(), "unavailable") {
 		t.Errorf("nil WriteTo: want 'unavailable' comment, got %q", sb.String())
 	}
@@ -71,7 +71,7 @@ func TestMetricsWriteToGatewayCounters(t *testing.T) {
 	m.incConcurrencyBusy()
 
 	var sb strings.Builder
-	m.WriteTo(&sb, nil, nil)
+	m.WriteTo(&sb, nil, nil, nil)
 	output := sb.String()
 
 	mustContain := []string{
@@ -110,7 +110,7 @@ func TestMetricsWriteToAgentCounters(t *testing.T) {
 	}
 
 	var sb strings.Builder
-	m.WriteTo(&sb, agentMet, nil)
+	m.WriteTo(&sb, agentMet, nil, nil)
 	output := sb.String()
 
 	mustContain := []string{

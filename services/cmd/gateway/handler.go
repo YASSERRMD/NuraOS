@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/agent"
+	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 )
 
@@ -26,6 +27,9 @@ var chatBufPool = sync.Pool{
 // maxChatBodyBytes caps the POST /chat request body to prevent oversized inputs.
 const maxChatBodyBytes = 64 * 1024
 
+// cgroupServices lists the service names whose cgroup stats appear in /metrics.
+var cgroupServices = []string{"nura-agent", "gateway", "llama-server"}
+
 type handlers struct {
 	agentClient *agent.Client
 	store       *MetricsStore
@@ -33,6 +37,7 @@ type handlers struct {
 	machineID   string
 	hostname    string
 	diskMon     *diskmon.Monitor // nil when disk monitoring is disabled
+	cgMgr       *cgroup.Manager  // nil when cgroup monitoring is disabled
 }
 
 func newHandlers(socketPath string, store *MetricsStore) *handlers {
@@ -216,9 +221,14 @@ func (h *handlers) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		disk = h.diskMon.LastUsage()
 	}
 
+	var cgStats map[string]*cgroup.Stats
+	if h.cgMgr != nil {
+		cgStats = h.cgMgr.SliceStats(cgroupServices)
+	}
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	h.store.WriteTo(w, agentMetPtr, disk)
+	h.store.WriteTo(w, agentMetPtr, disk, cgStats)
 }
 
 // configHandler serves GET /config and returns the effective gateway
