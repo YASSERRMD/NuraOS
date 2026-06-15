@@ -95,10 +95,12 @@ yes "" | make -C "${SOURCE_DIR}" \
     CONFIG_STATIC=y \
     oldconfig
 set -o pipefail
-# Force-disable NANDWRITE: kconfig selects it despite busybox.config=n because
-# of an internal dependency; nandwrite.c needs mtd/mtd-user.h which is not in
-# the musl include tree. Patch the generated .config directly after oldconfig.
-sed -i "s/^CONFIG_NANDWRITE=[ym]/CONFIG_NANDWRITE=n/" "${SOURCE_DIR}/.config"
+# Force-disable MTD tools: NANDDUMP selects NANDWRITE via kconfig 'select',
+# so it bypasses busybox.config=n and forces nandwrite.c to compile.
+# nandwrite.c needs mtd/mtd-user.h which is not in the musl include tree.
+# Patch the generated .config directly as belt-and-suspenders.
+sed -i "s/^CONFIG_NANDDUMP=[ym]/CONFIG_NANDDUMP=n/;
+        s/^CONFIG_NANDWRITE=[ym]/CONFIG_NANDWRITE=n/" "${SOURCE_DIR}/.config"
 make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \
