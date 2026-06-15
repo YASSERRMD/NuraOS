@@ -39,6 +39,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/delta"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/eventbus"
+	"github.com/yasserrmd/nuraos/services/internal/history"
 	"github.com/yasserrmd/nuraos/services/internal/pkgmgr"
 	"github.com/yasserrmd/nuraos/services/internal/update"
 )
@@ -112,6 +113,8 @@ func main() {
 		cmdDisable(client, rest[0], outputJSON)
 	case "reclaim":
 		cmdReclaim(outputJSON)
+	case "history":
+		cmdHistory(rest, outputJSON)
 	case "update":
 		cmdUpdate(rest, outputJSON)
 	case "pkg":
@@ -272,6 +275,87 @@ func cmdShutdown(c *ctlsock.Client, asJSON bool, reboot bool) {
 	}
 }
 
+func cmdHistory(args []string, asJSON bool) {
+	dataDir := os.Getenv("NURA_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+	store := history.NewStore(dataDir)
+
+	if len(args) == 0 {
+		args = []string{"list"} // default subcommand
+	}
+	switch args[0] {
+	case "list":
+		entries, err := store.List()
+		if err != nil {
+			fatalf("history list: %v", err)
+		}
+		if asJSON {
+			printJSON(entries)
+			return
+		}
+		if len(entries) == 0 {
+			fmt.Println("no version history recorded")
+			return
+		}
+		fmt.Printf("%-20s  %-8s  %-8s  %-10s  %s\n", "ID", "SLOT", "KNOWN-GOOD", "VERSION", "TIMESTAMP")
+		fmt.Println(strings.Repeat("-", 72))
+		for _, e := range entries {
+			kg := ""
+			if e.KnownGood {
+				kg = "yes"
+			}
+			fmt.Printf("%-20s  %-8s  %-10s  %-10s  %s\n",
+				e.ID, e.Slot, kg, e.ImageVersion, e.Timestamp)
+		}
+
+	case "mark-good":
+		if len(args) < 2 {
+			fatalf("history mark-good: entry ID required")
+		}
+		if err := store.MarkKnownGood(args[1]); err != nil {
+			fatalf("history mark-good: %v", err)
+		}
+		if !asJSON {
+			fmt.Printf("entry %s marked as known-good\n", args[1])
+		}
+
+	case "rollback":
+		if len(args) < 2 {
+			fatalf("history rollback: entry ID required")
+		}
+		if err := store.RollbackTo(args[1], dataDir); err != nil {
+			fatalf("history rollback: %v", err)
+		}
+		if asJSON {
+			printJSON(map[string]string{"rolled_back_to": args[1]})
+			return
+		}
+		e, _ := store.Get(args[1])
+		fmt.Printf("rolled back to entry %s (slot %s); reboot to activate\n", args[1], e.Slot)
+
+	case "prune":
+		max := 10
+		if len(args) >= 2 {
+			n, err := strconv.Atoi(args[1])
+			if err != nil || n < 1 {
+				fatalf("history prune: invalid max count %q", args[1])
+			}
+			max = n
+		}
+		if err := store.Prune(max); err != nil {
+			fatalf("history prune: %v", err)
+		}
+		if !asJSON {
+			fmt.Printf("history pruned to %d entries\n", max)
+		}
+
+	default:
+		fatalf("history: unknown subcommand %q (list|mark-good|rollback|prune)", args[0])
+	}
+}
+
 func cmdUpdate(args []string, asJSON bool) {
 	dataDir := os.Getenv("NURA_DATA_DIR")
 	if dataDir == "" {
@@ -308,6 +392,14 @@ func cmdUpdate(args []string, asJSON bool) {
 		if err != nil {
 			fatalf("update apply: %v", err)
 		}
+		store := history.NewStore(dataDir)
+		_ = store.Add(history.Entry{
+			ID:       tx.ID,
+			Slot:     tx.TargetSlot,
+			ImageSHA: tx.ExpectedSHA,
+			Source:   tx.Source,
+			TxID:     tx.ID,
+		}, 0)
 		if asJSON {
 			printJSON(tx)
 			return

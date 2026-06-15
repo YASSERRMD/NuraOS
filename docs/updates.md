@@ -213,3 +213,53 @@ delta generated: N copied, M new blocks, P% bandwidth saving
 `P%` = `(1 - new_data_bytes / full_target_bytes) * 100`.
 
 With `--json` the full stats struct is emitted for programmatic consumption.
+
+---
+
+## Version History
+
+Every successful update (full image or delta) appends an entry to
+`/data/update/history.json`. The history store enables rollback to any prior
+state and tracks which versions are confirmed stable.
+
+### Entry schema
+
+| Field           | Type     | Description                                              |
+|-----------------|----------|----------------------------------------------------------|
+| `id`            | string   | Unique ID (hex timestamp or caller-supplied value)       |
+| `timestamp`     | string   | RFC 3339 UTC timestamp of when the entry was recorded    |
+| `slot`          | string   | A/B rootfs slot that holds this version                  |
+| `image_sha`     | string   | SHA-256 of the rootfs image (omitempty)                  |
+| `image_version` | string   | Human-readable version string (omitempty)                |
+| `source`        | string   | Where the image came from (URL, path, "rollback to ...") |
+| `packages`      | string[] | Package names+versions installed at this point           |
+| `known_good`    | bool     | True when this version is confirmed healthy              |
+| `tx_id`         | string   | Links to the update transaction that produced this entry |
+
+### CLI commands
+
+```
+nuractl history list              List all entries (newest-first)
+nuractl history list --json       Machine-readable JSON array
+nuractl history mark-good <id>    Mark entry as known-good
+nuractl history rollback <id>     Switch active slot to entry's slot
+nuractl history prune <N>         Retain at most N entries
+```
+
+### Retention policy
+
+`history add` and `history prune` both enforce a configurable cap (default 10).
+When the cap is exceeded:
+
+1. Oldest entries that are NOT marked `known_good` are removed first.
+2. If all non-known-good entries are removed and the count still exceeds the
+   cap, the oldest known-good entries are removed.
+
+This ensures stable known-good markers survive across normal update churn.
+
+### Rollback flow
+
+`nuractl history rollback <id>` writes the target entry's slot to
+`/data/etc/active-slot` and then appends a new rollback history entry with
+`source="rollback to <id>"`. The next reboot will start from the rolled-back
+slot. No boot-slot image is overwritten; rollback only flips the slot pointer.
