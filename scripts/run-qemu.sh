@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # Boot NuraOS in QEMU with serial console on stdio.
 #
+# Two boot modes:
+#   Direct kernel (default): -kernel/-initrd flags; no real bootloader.
+#   Bootloader disk (--disk): boots from a disk image built by build-boot.sh;
+#     exercises the extlinux boot path with A/B slot and recovery menu.
+#
 # Typical usage after build-image.sh:
 #   ./scripts/run-qemu.sh
+#
+# Bootloader path (after build-boot.sh):
+#   ./scripts/run-qemu.sh --disk image/out/disk.img
 #
 # Usage: ./scripts/run-qemu.sh [OPTIONS]
 #
 # Options:
+#   --disk PATH        boot from disk image (real bootloader path)
 #   --initramfs PATH   path to initramfs.cpio.gz (default: image/out/initramfs.cpio.gz)
 #   --data PATH        path to /data ext4 image  (default: image/out/data.img)
 #   --kernel PATH      path to bzImage           (default: image/out/bzImage)
@@ -31,6 +40,7 @@ INITRAMFS="${OUT_DIR}/initramfs.cpio.gz"
 DATA_IMG="${OUT_DIR}/data.img"
 MANIFEST="${OUT_DIR}/manifest.json"
 LOG_FILE="${OUT_DIR}/boot.log"
+DISK_IMG=""
 USE_INITRAMFS=1
 USE_DATA=1
 MEM=512
@@ -41,6 +51,7 @@ TIMEOUT=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --disk)      shift; DISK_IMG="$1" ;;
         --initramfs) shift; INITRAMFS="$1" ;;
         --data)      shift; DATA_IMG="$1" ;;
         --kernel)    shift; KERNEL="$1" ;;
@@ -72,11 +83,9 @@ if [ -f "${MANIFEST}" ]; then
     log "manifest: nura=${nura_ver}  kernel=${kernel_ver}"
 fi
 
-[ -f "${KERNEL}" ] || die "bzImage not found at ${KERNEL}; run scripts/build-image.sh"
-
 mkdir -p "$(dirname "${LOG_FILE}")"
 
-# Build the QEMU command line.
+# Base QEMU args shared by both boot modes.
 QEMU_ARGS=(
     -machine q35,accel=tcg
     -cpu qemu64
@@ -85,25 +94,7 @@ QEMU_ARGS=(
     -nographic
     -serial "mon:stdio"
     -no-reboot
-    -kernel "${KERNEL}"
 )
-
-# Kernel command line.
-KCMDLINE="console=ttyS0,115200 panic=5 loglevel=7"
-
-if [ "${USE_INITRAMFS}" -eq 1 ] && [ -f "${INITRAMFS}" ]; then
-    QEMU_ARGS+=(-initrd "${INITRAMFS}")
-    log "initramfs: ${INITRAMFS}"
-elif [ "${USE_INITRAMFS}" -eq 1 ]; then
-    log "WARNING: initramfs not found at ${INITRAMFS}; booting without it (expect kernel panic)"
-fi
-
-if [ "${USE_DATA}" -eq 1 ] && [ -f "${DATA_IMG}" ]; then
-    QEMU_ARGS+=(
-        -drive "file=${DATA_IMG},format=raw,if=virtio,cache=writeback"
-    )
-    log "data disk: ${DATA_IMG}"
-fi
 
 # User-mode networking with host port forwards.
 QEMU_ARGS+=(
@@ -111,9 +102,49 @@ QEMU_ARGS+=(
     -device "virtio-net-pci,netdev=net0"
 )
 
-QEMU_ARGS+=(-append "${KCMDLINE}")
+# /data drive (shared by both modes).
+if [ "${USE_DATA}" -eq 1 ] && [ -f "${DATA_IMG}" ]; then
+    QEMU_ARGS+=(
+        -drive "file=${DATA_IMG},format=raw,if=virtio,cache=writeback"
+    )
+    log "data disk: ${DATA_IMG}"
+fi
 
-log "kernel: ${KERNEL}"
+if [ -n "${DISK_IMG}" ]; then
+    # ----------------------------------------------------------------
+    # Bootloader disk mode: boot from a disk image built by build-boot.sh.
+    # The disk image contains the MBR, syslinux bootloader, kernel,
+    # initramfs, and extlinux.conf with the A/B + recovery menu.
+    # ----------------------------------------------------------------
+    [ -f "${DISK_IMG}" ] || die "disk image not found at ${DISK_IMG}; run scripts/build-boot.sh"
+    log "BOOT MODE: bootloader disk (extlinux)"
+    log "disk image: ${DISK_IMG}"
+    QEMU_ARGS+=(
+        -drive "file=${DISK_IMG},format=raw,if=ide,index=0,media=disk"
+        -boot "order=c,menu=on"
+    )
+else
+    # ----------------------------------------------------------------
+    # Direct kernel mode (default): QEMU -kernel shortcut.
+    # Faster iteration; no real bootloader is exercised.
+    # ----------------------------------------------------------------
+    [ -f "${KERNEL}" ] || die "bzImage not found at ${KERNEL}; run scripts/build-image.sh"
+    log "BOOT MODE: direct kernel (-kernel)"
+    log "kernel: ${KERNEL}"
+
+    KCMDLINE="console=ttyS0,115200 panic=5 loglevel=7"
+    QEMU_ARGS+=(-kernel "${KERNEL}")
+
+    if [ "${USE_INITRAMFS}" -eq 1 ] && [ -f "${INITRAMFS}" ]; then
+        QEMU_ARGS+=(-initrd "${INITRAMFS}")
+        log "initramfs: ${INITRAMFS}"
+    elif [ "${USE_INITRAMFS}" -eq 1 ]; then
+        log "WARNING: initramfs not found at ${INITRAMFS}; booting without it (expect kernel panic)"
+    fi
+
+    QEMU_ARGS+=(-append "${KCMDLINE}")
+fi
+
 log "memory: ${MEM}M  cpus: ${CPUS}"
 log "API port: ${PORT_API}  metrics port: ${PORT_METRICS}"
 log "serial log: ${LOG_FILE}"
