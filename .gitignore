@@ -35,6 +35,10 @@ third_party/_download/
 third_party/musl-*/
 third_party/musl-install/
 
+# ---- llama.cpp (fetched, not committed) ----
+third_party/llama-cpp/
+third_party/llama-build/
+
 # ---- image outputs ----
 image/out/bzImage
 image/out/initramfs.cpio.gz
