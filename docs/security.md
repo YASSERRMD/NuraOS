@@ -571,3 +571,129 @@ log entry; the service starts unconfined. Production kernels built from
 | llama-server writing `/data/etc` | No -- not in llama-server profile |
 | llama-server reading `/data/models` | Yes -- explicitly declared |
 | nura-agent creating `/run/nura-agent.sock` | Yes -- `make_sock` on `/run` |
+
+---
+
+## Capability model
+
+Linux capabilities divide the traditional root privileges into 41 distinct rights
+(CAP_CHOWN through CAP_CHECKPOINT_RESTORE). NuraOS trims the **bounding set** for
+each service before exec'ing it, limiting what capabilities the service and all its
+descendants can ever hold, regardless of file capabilities or setuid bits.
+
+### How capability trimming works
+
+The `nura-manager seccomp-exec` trampoline calls `prctl(PR_CAPBSET_DROP, cap)` for
+each capability to remove. This happens before exec'ing `su`, so the restriction
+applies to the entire privilege-drop chain:
+
+```
+nura-manager                   (all caps, root)
+  seccomp-exec                 (all caps -> bounding trimmed)
+    su                         (bounding trimmed; gets permitted = bounding via setuid-root exec)
+      sh -c "exec /sbin/svc"   (bounding trimmed; setresuid clears effective+permitted)
+        /sbin/svc              (bounding trimmed, permitted=0, effective=0)
+```
+
+After `su` calls `setresuid(uid, uid, uid)` (transitioning from root to service UID),
+the process's effective and permitted capability sets are cleared to zero. The service
+therefore runs with **no effective or permitted capabilities**. The bounding set is
+still trimmed, providing defence-in-depth against future file-capability additions.
+
+### Unit configuration
+
+```toml
+[capabilities]
+bounding_drop = ["all"]
+```
+
+The special value `"all"` removes every capability except `cap_setuid` and `cap_setgid`,
+which are retained so that `su` can call `setresuid`/`setresgid` to drop to the service
+account. An explicit list of capability names (e.g. `["cap_sys_admin", "cap_net_raw"]`)
+can be used to drop specific capabilities while leaving others.
+
+### Per-service capability map
+
+All three NuraOS services use `bounding_drop = ["all"]`:
+
+| Service | UID | Effective caps | Permitted caps | Bounding set |
+|---------|-----|---------------|---------------|--------------|
+| nura-agent | 1000 (nura) | none | none | {cap_setuid, cap_setgid} |
+| gateway | 1001 (nura-gw) | none | none | {cap_setuid, cap_setgid} |
+| llama-server | 1002 (llama) | none | none | {cap_setuid, cap_setgid} |
+
+`cap_setuid` and `cap_setgid` remain in the bounding set only to allow `su` to
+perform the privilege drop. The services themselves never use these capabilities;
+they are empty in the effective and permitted sets after the UID transition.
+
+### nura-manager capability justification
+
+`nura-manager` (PID 1 / service manager) runs as root and retains all capabilities
+in order to:
+
+| Capability | Justification |
+|-----------|--------------|
+| `cap_setuid` + `cap_setgid` | Spawn services as different UIDs via `su` |
+| `cap_setpcap` | Drop capabilities from bounding set of child processes |
+| `cap_sys_admin` | Mount filesystems (`/proc`, `/sys`, cgroup2, tmpfs) at boot |
+| `cap_chown` | Set directory ownership during boot (`/data/logs`, etc.) |
+| `cap_dac_override` | Read unit files and seccomp/landlock profiles owned by root |
+| `cap_net_admin` | Configure network interfaces (`ip addr`, routing) |
+
+No other service has `cap_sys_admin` or any other privileged capability. The
+above list represents the minimum needed to bootstrap the system.
+
+### Removing the su setuid binary (future)
+
+The current architecture requires `su` (a setuid-root binary) for the privilege
+drop. A future phase can eliminate this dependency by switching the lifecycle
+manager to use `SysProcAttr.Credential` (Go's built-in fork+setresuid path),
+which requires no setuid binary. That change would allow the bounding set to be
+trimmed to completely empty (`{}`) for all services, since the UID drop would
+happen in the forked child before exec without needing CAP_SETUID in the bounding.
+
+### Linux capability reference
+
+| Name | Number | What it allows |
+|------|--------|---------------|
+| cap_chown | 0 | Arbitrary file chown |
+| cap_dac_override | 1 | Bypass file permission checks |
+| cap_dac_read_search | 2 | Bypass directory read/search |
+| cap_fowner | 3 | Bypass permission checks on files not owned by process |
+| cap_fsetid | 4 | Set setuid/setgid bits on files not owned by process |
+| cap_kill | 5 | Send signals to processes of any UID |
+| cap_setgid | 6 | Arbitrary GID manipulation (setresgid, setgroups) |
+| cap_setuid | 7 | Arbitrary UID manipulation (setresuid) |
+| cap_setpcap | 8 | Modify bounding set; transfer capability to another process |
+| cap_linux_immutable | 9 | Set IMMUTABLE and APPEND file attributes |
+| cap_net_bind_service | 10 | Bind to ports < 1024 |
+| cap_net_broadcast | 11 | Make socket broadcasts; listen to multicasts |
+| cap_net_admin | 12 | Network administration (interfaces, routing, firewall) |
+| cap_net_raw | 13 | Raw socket access; bind to any address |
+| cap_ipc_lock | 14 | Lock memory (mlock, mlockall, shmctl SHM_LOCK) |
+| cap_ipc_owner | 15 | Bypass IPC permission checks |
+| cap_sys_module | 16 | Load/unload kernel modules |
+| cap_sys_rawio | 17 | Raw I/O port access; disk raw access |
+| cap_sys_chroot | 18 | Use chroot(2) |
+| cap_sys_ptrace | 19 | Trace arbitrary processes (ptrace) |
+| cap_sys_pacct | 20 | Configure process accounting |
+| cap_sys_admin | 21 | Wide range of admin ops: mount, swapon, quota, etc. |
+| cap_sys_boot | 22 | Use reboot(2) and kexec_load(2) |
+| cap_sys_nice | 23 | Set process priority; CPU affinity of other processes |
+| cap_sys_resource | 24 | Override resource limits |
+| cap_sys_time | 25 | Set system clock |
+| cap_sys_tty_config | 26 | Configure tty devices; vhangup(2) |
+| cap_mknod | 27 | Create special files with mknod(2) |
+| cap_lease | 28 | Establish leases on arbitrary files |
+| cap_audit_write | 29 | Write to kernel audit log |
+| cap_audit_control | 30 | Enable/disable kernel auditing |
+| cap_setfcap | 31 | Set file capabilities |
+| cap_mac_override | 32 | Override MAC policy |
+| cap_mac_admin | 33 | Administer MAC policy |
+| cap_syslog | 34 | Access kernel ring buffer; restrict dmesg |
+| cap_wake_alarm | 35 | Trigger system wakeup from suspend |
+| cap_block_suspend | 36 | Prevent system from entering suspend |
+| cap_audit_read | 37 | Read audit log via netlink |
+| cap_perfmon | 38 | Use perf_event_open; kernel performance monitoring |
+| cap_bpf | 39 | Load privileged BPF programs |
+| cap_checkpoint_restore | 40 | Checkpoint/restore process state (CRIU) |

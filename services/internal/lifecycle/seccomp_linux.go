@@ -3,6 +3,8 @@
 package lifecycle
 
 import (
+	"strings"
+
 	"github.com/yasserrmd/nuraos/services/internal/unit"
 )
 
@@ -10,12 +12,15 @@ import (
 const seccompExecBin = "/sbin/nura-manager"
 
 // wrapWithSeccomp prepends the seccomp-exec trampoline to args when the unit
-// has a seccomp or landlock profile configured. The trampoline applies the BPF
-// filter and/or Landlock ruleset, then exec()s the remaining command. Both are
-// inherited by all subsequent exec calls in the privilege-drop chain
-// (su -> sh -> service).
+// has a seccomp profile, landlock profile, or capability bounding-set drops
+// configured. The trampoline applies each restriction in order (cap bounding
+// drop, seccomp BPF filter, Landlock ruleset), then exec()s the remaining
+// command. All restrictions are inherited by the su/sh/service exec chain.
 func wrapWithSeccomp(args []string, u *unit.Unit) []string {
-	if u.Seccomp.Profile == "" && u.Landlock.Profile == "" {
+	hasSeccomp := u.Seccomp.Profile != ""
+	hasLandlock := u.Landlock.Profile != ""
+	hasCaps := len(u.Capabilities.BoundingDrop) > 0
+	if !hasSeccomp && !hasLandlock && !hasCaps {
 		return args
 	}
 	mode := u.Seccomp.Mode
@@ -23,11 +28,14 @@ func wrapWithSeccomp(args []string, u *unit.Unit) []string {
 		mode = "enforce"
 	}
 	prefix := []string{seccompExecBin, "seccomp-exec"}
-	if u.Seccomp.Profile != "" {
+	if hasSeccomp {
 		prefix = append(prefix, "--profile", u.Seccomp.Profile, "--mode", mode)
 	}
-	if u.Landlock.Profile != "" {
+	if hasLandlock {
 		prefix = append(prefix, "--landlock-profile", u.Landlock.Profile)
+	}
+	if hasCaps {
+		prefix = append(prefix, "--cap-drop", strings.Join(u.Capabilities.BoundingDrop, ","))
 	}
 	prefix = append(prefix, "--")
 	return append(prefix, args...)
