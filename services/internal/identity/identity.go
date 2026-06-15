@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/yasserrmd/nuraos/services/internal/atomicfile"
 )
 
 const (
@@ -37,7 +39,10 @@ func LoadOrCreate(dataDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("generate machine-id: %w", err)
 	}
-	if err := atomicWrite(path, []byte(id+"\n")); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return "", fmt.Errorf("mkdir for machine-id: %w", err)
+	}
+	if err := atomicfile.Write(path, []byte(id+"\n"), 0644); err != nil {
 		return "", fmt.Errorf("persist machine-id: %w", err)
 	}
 	return id, nil
@@ -72,15 +77,3 @@ func generateID() (string, error) {
 	return fmt.Sprintf("%x", b), nil
 }
 
-// atomicWrite writes data to path using write-to-temp-then-rename so that
-// a crash mid-write does not leave a partial file.
-func atomicWrite(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}

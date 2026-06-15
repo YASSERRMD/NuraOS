@@ -76,11 +76,23 @@ func (w *Writer) Write(r Record) error {
 	return nil
 }
 
-// Close flushes and closes the current file.
+// Sync flushes buffered writes to the underlying block device.
+// Call after a burst of Write calls to ensure durability before a critical event.
+func (w *Writer) Sync() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file != nil {
+		return w.file.Sync()
+	}
+	return nil
+}
+
+// Close syncs and closes the current file.
 func (w *Writer) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.file != nil {
+		_ = w.file.Sync()
 		err := w.file.Close()
 		w.file = nil
 		return err
