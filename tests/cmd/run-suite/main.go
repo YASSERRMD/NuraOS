@@ -28,7 +28,17 @@ import (
 	"github.com/yasserrmd/nuraos/tests/reporters"
 	agentcore "github.com/yasserrmd/nuraos/tests/suites/agent-core"
 	buildandboot "github.com/yasserrmd/nuraos/tests/suites/build-and-boot"
+	devicespower "github.com/yasserrmd/nuraos/tests/suites/devices-power"
+	e2e "github.com/yasserrmd/nuraos/tests/suites/e2e"
+	loggingtime "github.com/yasserrmd/nuraos/tests/suites/logging-time"
+	networkfirewall "github.com/yasserrmd/nuraos/tests/suites/network-firewall"
+	performance "github.com/yasserrmd/nuraos/tests/suites/performance"
+	provenancesecurity "github.com/yasserrmd/nuraos/tests/suites/provenance-security"
 	providers "github.com/yasserrmd/nuraos/tests/suites/providers"
+	serviceshttp "github.com/yasserrmd/nuraos/tests/suites/services-http"
+	storage "github.com/yasserrmd/nuraos/tests/suites/storage"
+	toolssuite "github.com/yasserrmd/nuraos/tests/suites/tools"
+	updates "github.com/yasserrmd/nuraos/tests/suites/updates"
 )
 
 func main() {
@@ -81,10 +91,20 @@ type SuiteFunc func(ctx context.Context, inst *harness.QEMUInstance) []harness.R
 
 // suiteRegistry maps suite names to their runner functions.
 var suiteRegistry = map[string]SuiteFunc{
-	"smoke":          runSmokeFunc,
-	"build-and-boot": buildandboot.Run,
-	"agent-core":     agentcore.Run,
-	"providers":      providers.Run,
+	"smoke":                runSmokeFunc,
+	"build-and-boot":       buildandboot.Run,
+	"agent-core":           agentcore.Run,
+	"providers":            providers.Run,
+	"tools":                toolssuite.Run,
+	"services-http":        serviceshttp.Run,
+	"provenance-security":  provenancesecurity.Run,
+	"storage":              storage.Run,
+	"logging-time":         loggingtime.Run,
+	"devices-power":        devicespower.Run,
+	"network-firewall":     networkfirewall.Run,
+	"updates":              updates.Run,
+	"performance":          performance.Run,
+	"e2e":                  e2e.Run,
 }
 
 func availableSuites() []string {
