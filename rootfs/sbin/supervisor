@@ -246,7 +246,13 @@ fi
 
 stage "stage2-nura-agent"
 if [ -x /sbin/nura-agent ]; then
-    start_service nura_agent /sbin/nura-agent run &
+    # Run as the nura service account (uid=1000) to drop root.
+    if command -v su >/dev/null 2>&1 && getent passwd nura >/dev/null 2>&1; then
+        start_service nura_agent su -s /bin/sh nura -c "exec /sbin/nura-agent run" &
+    else
+        log "WARN: nura user absent or su unavailable; running nura-agent as root"
+        start_service nura_agent /sbin/nura-agent run &
+    fi
     sleep 2
     log "nura-agent started"
 else
@@ -259,7 +265,13 @@ fi
 stage "stage3-gateway"
 if [ -x /sbin/gateway ]; then
     wait_agent_socket /run/nura-agent.sock 30 || true
-    start_service gateway /sbin/gateway &
+    # Run as the nura service account (uid=1000) to drop root.
+    if command -v su >/dev/null 2>&1 && getent passwd nura >/dev/null 2>&1; then
+        start_service gateway su -s /bin/sh nura -c "exec /sbin/gateway" &
+    else
+        log "WARN: nura user absent or su unavailable; running gateway as root"
+        start_service gateway /sbin/gateway &
+    fi
 else
     log "gateway not installed yet (Phase 28+); skipping"
 fi

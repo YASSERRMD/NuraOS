@@ -81,6 +81,14 @@ else
     mkdir -p /data/models /data/logs /data/sessions /data/etc
 fi
 
+# ----- Least-privilege setup (Phase 41) -----
+# The nura service account (uid=1000, gid=1000) owns writable service dirs.
+# /run holds the agent Unix socket; /data/logs and /data/sessions are writable.
+mkdir -p /run
+chown 1000:1000 /run /data/logs /data/sessions 2>/dev/null || \
+    warn "chown /run and /data dirs failed (busybox may not have chown or passwd)"
+chmod 750 /run /data/logs /data/sessions 2>/dev/null || true
+
 # ----- Optional network self-test (off by default) -----
 if has_flag "nura.nettest=1"; then
     GW=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
