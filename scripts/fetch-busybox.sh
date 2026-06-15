@@ -61,21 +61,39 @@ tar -C "${REPO_ROOT}/third_party" -xjf "${TARBALL}"
 [ -f "${BB_CONFIG}" ] || die "BusyBox config not found: ${BB_CONFIG}"
 cp "${BB_CONFIG}" "${SOURCE_DIR}/.config"
 
-# Provide Linux kernel headers to musl's include tree.
-# BusyBox init and libbb use <linux/vt.h>, <linux/capability.h>, etc.
-# musl-gcc builds with -nostdinc so those headers are invisible unless we
-# copy them into the musl install's own include tree (which is always on
-# the search path).  Kernel headers are ABI-only and do not contain glibc
-# symbols, so merging them here does not pollute musl's C library headers.
-MUSL_INC="${INSTALL_DIR}/include"
-if [ -d /usr/include/linux ] && [ ! -d "${MUSL_INC}/linux" ]; then
-    log "copying Linux kernel headers into musl include tree ..."
-    cp -r /usr/include/linux       "${MUSL_INC}/linux"
-    cp -r /usr/include/asm-generic "${MUSL_INC}/asm-generic" 2>/dev/null || true
-    if [ -d /usr/include/x86_64-linux-gnu/asm ]; then
-        cp -r /usr/include/x86_64-linux-gnu/asm "${MUSL_INC}/asm"
-    elif [ -d /usr/include/asm ]; then
-        cp -r /usr/include/asm "${MUSL_INC}/asm"
+# Provide Linux kernel headers in musl's include tree so BusyBox can
+# compile files that use <linux/vt.h>, <linux/capability.h>, etc.
+# musl-gcc uses -nostdinc; kernel headers must be in its own include tree.
+# The path to that tree differs: source-built musl puts it under INSTALL_DIR;
+# distro musl-tools (e.g. Ubuntu's musl-gcc) puts it at a system path.
+# Detect it from musl-gcc's own verbose preprocessor output, then copy
+# the kernel header subdirectories (linux/, asm-generic/, asm/) there.
+# Those subdirectories contain only ABI definitions, not glibc symbols, so
+# they cannot shadow musl's own C library headers.
+if [ -d /usr/include/linux ]; then
+    MUSL_INC=$(echo | "${MUSL_GCC}" -E -x c - -v 2>&1 \
+        | awk '/^#include <\.\.\.> search starts/{f=1;next} f && /^ /{sub(/^ /,"");print;exit}')
+    : "${MUSL_INC:=${INSTALL_DIR}/include}"
+    mkdir -p "${MUSL_INC}"
+    if [ ! -d "${MUSL_INC}/linux" ]; then
+        log "copying Linux kernel headers into ${MUSL_INC} ..."
+        if [ -w "${MUSL_INC}" ]; then
+            cp -r /usr/include/linux       "${MUSL_INC}/linux"
+            cp -r /usr/include/asm-generic "${MUSL_INC}/asm-generic" 2>/dev/null || true
+            if [ -d /usr/include/x86_64-linux-gnu/asm ]; then
+                cp -r /usr/include/x86_64-linux-gnu/asm "${MUSL_INC}/asm"
+            elif [ -d /usr/include/asm ]; then
+                cp -r /usr/include/asm "${MUSL_INC}/asm"
+            fi
+        else
+            sudo cp -r /usr/include/linux       "${MUSL_INC}/linux"
+            sudo cp -r /usr/include/asm-generic "${MUSL_INC}/asm-generic" 2>/dev/null || true
+            if [ -d /usr/include/x86_64-linux-gnu/asm ]; then
+                sudo cp -r /usr/include/x86_64-linux-gnu/asm "${MUSL_INC}/asm"
+            elif [ -d /usr/include/asm ]; then
+                sudo cp -r /usr/include/asm "${MUSL_INC}/asm"
+            fi
+        fi
     fi
 fi
 
