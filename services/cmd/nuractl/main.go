@@ -37,6 +37,7 @@ import (
 	"strings"
 
 	"github.com/yasserrmd/nuraos/services/internal/backup"
+	"github.com/yasserrmd/nuraos/services/internal/compliance"
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/secaudit"
 	"github.com/yasserrmd/nuraos/services/internal/delta"
@@ -131,6 +132,8 @@ func main() {
 		cmdSelftest(rest, outputJSON)
 	case "secaudit":
 		cmdSecaudit(rest, outputJSON)
+	case "data":
+		cmdData(rest, outputJSON)
 	case "diag":
 		cmdDiag(rest, outputJSON)
 	case "backup":
@@ -594,6 +597,69 @@ func cmdPkg(args []string, asJSON bool) {
 	}
 }
 
+func cmdData(args []string, asJSON bool) {
+	dataDir := os.Getenv("NURA_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "nuractl data: subcommand required (report|delete-expired|compliance-report)")
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "delete-expired":
+		retentionDays := 0
+		for i := 1; i+1 < len(args); i++ {
+			if args[i] == "--retention-days" {
+				fmt.Sscan(args[i+1], &retentionDays)
+			}
+		}
+		res, err := compliance.DeleteExpired(dataDir, retentionDays)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "nuractl: data delete-expired: %v\n", err)
+		}
+		if asJSON {
+			printJSON(res)
+			return
+		}
+		fmt.Printf("sessions deleted:    %d\n", res.SessionsDeleted)
+		fmt.Printf("journal deleted:     %d\n", res.JournalEntriesDeleted)
+		fmt.Printf("provenance deleted:  %d\n", res.ProvenanceRecordsDeleted)
+		fmt.Printf("bytes freed:         %d\n", res.BytesFreed)
+
+	case "compliance-report":
+		logPath := dataDir + "/compliance/audit.jsonl"
+		for i := 1; i+1 < len(args); i++ {
+			if args[i] == "--log" {
+				logPath = args[i+1]
+			}
+		}
+		log := compliance.NewAuditLog(logPath)
+		records, err := log.Report()
+		if err != nil {
+			fatalf("data compliance-report: %v", err)
+		}
+		if asJSON {
+			printJSON(records)
+			return
+		}
+		if len(records) == 0 {
+			fmt.Println("no compliance audit records found")
+			return
+		}
+		fmt.Printf("%-36s  %-12s  %-12s  %-9s  %-12s\n",
+			"TURN_ID", "PROVIDER", "RESIDENCY", "SENSITIVE", "CROSS_BORDER")
+		for _, r := range records {
+			fmt.Printf("%-36s  %-12s  %-12s  %-9v  %-12v\n",
+				r.TurnID, r.Provider, r.Residency, r.Sensitive, r.CrossBorder)
+		}
+
+	default:
+		fatalf("data: unknown subcommand %q (delete-expired|compliance-report)", args[0])
+	}
+}
+
 func cmdSecaudit(args []string, asJSON bool) {
 	criticalOnly := false
 	for _, a := range args {
@@ -914,6 +980,10 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  selftest [--boot] [--category kernel|storage|network|agent]")
 	fmt.Fprintln(os.Stderr, "                            Run built-in health self-tests")
 	fmt.Fprintln(os.Stderr, "  secaudit [--critical]     Run security posture audit (exit 2 on critical failure)")
+	fmt.Fprintln(os.Stderr, "  data delete-expired [--retention-days N]")
+	fmt.Fprintln(os.Stderr, "                            Delete data older than retention window")
+	fmt.Fprintln(os.Stderr, "  data compliance-report [--log FILE]")
+	fmt.Fprintln(os.Stderr, "                            Show per-turn provider handling report")
 	fmt.Fprintln(os.Stderr, "  diag [--out DIR] [--crash-dir DIR]")
 	fmt.Fprintln(os.Stderr, "                            Bundle redacted diagnostic archive")
 	fmt.Fprintln(os.Stderr, "  backup [--out FILE] [--include-models] [--passphrase P]")
