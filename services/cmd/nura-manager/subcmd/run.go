@@ -8,14 +8,15 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/lifecycle"
 	"github.com/yasserrmd/nuraos/services/internal/resolver"
 	"github.com/yasserrmd/nuraos/services/internal/unit"
 )
 
 // Run loads units from dir, resolves their order, and starts them in sequence
-// using the lifecycle Manager. It blocks until SIGTERM/SIGINT, then performs
-// ordered shutdown.
+// using the lifecycle Manager. A control socket is exposed for nuractl.
+// It blocks until SIGTERM/SIGINT, then performs ordered shutdown.
 func Run(dir string) error {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -48,6 +49,20 @@ func Run(dir string) error {
 	}()
 
 	mgr := lifecycle.NewManager(log)
+
+	// Start the control socket server so nuractl can query and control services.
+	names := make([]string, len(plan.Order))
+	for i, u := range plan.Order {
+		names[i] = u.Name
+	}
+	ctlHandler := lifecycle.NewCtlHandler(mgr, names)
+	ctlSrv := ctlsock.NewServer(ctlsock.SocketPath, ctlHandler, log)
+	go func() {
+		if err := ctlSrv.Serve(ctx); err != nil {
+			log.Warn("control socket error", "err", err)
+		}
+	}()
+
 	mgr.StartPlan(ctx, plan.Order)
 	log.Info("all units started; waiting for shutdown signal")
 

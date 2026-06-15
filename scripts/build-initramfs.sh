@@ -94,6 +94,14 @@ if [ -f "${MANAGER_BIN}" ]; then
     log "installed nura-manager"
 fi
 
+# ----- nuractl (Phase 59+) -----
+NURACTL_BIN="${REPO_ROOT}/rootfs/staging/sbin/nuractl"
+if [ -f "${NURACTL_BIN}" ]; then
+    mkdir -p "${STAGING}/sbin"
+    install -m 755 "${NURACTL_BIN}" "${STAGING}/sbin/nuractl"
+    log "installed nuractl"
+fi
+
 # ----- Unit files -----
 UNIT_SRC="${REPO_ROOT}/rootfs/etc/nura/services"
 if [ -d "${UNIT_SRC}" ]; then
