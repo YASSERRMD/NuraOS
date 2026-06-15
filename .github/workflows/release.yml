@@ -1,0 +1,162 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version pins
+        run: |
+          source scripts/VERSIONS.env
+          echo "NURA_VERSION=${NURA_VERSION}" >> "$GITHUB_ENV"
+          echo "KERNEL_VERSION=${KERNEL_VERSION}" >> "$GITHUB_ENV"
+          echo "RUST_VERSION=${RUST_VERSION}" >> "$GITHUB_ENV"
+          echo "GO_VERSION=${GO_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential bc libelf-dev libssl-dev bison flex
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('agent/Cargo.lock') }}
+
+      - name: Install musl-tools
+        run: sudo apt-get install -y musl-tools
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: services/go.mod
+
+      - name: Restore kernel cache
+        id: cache-kernel
+        uses: actions/cache@v4
+        with:
+          path: image/out/bzImage
+          key: kernel-${{ hashFiles('scripts/VERSIONS.env', 'scripts/kernel-*.sh', 'scripts/build-kernel.sh') }}
+
+      - name: Fetch kernel source
+        if: steps.cache-kernel.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-kernel.sh
+
+      - name: Configure kernel
+        if: steps.cache-kernel.outputs.cache-hit != 'true'
+        run: ./scripts/kernel-config.sh
+
+      - name: Build kernel
+        if: steps.cache-kernel.outputs.cache-hit != 'true'
+        run: ./scripts/build-kernel.sh -j$(nproc)
+
+      - name: Fetch BusyBox
+        run: ./scripts/fetch-busybox.sh
+
+      - name: Build nura-agent (musl static)
+        working-directory: agent
+        run: |
+          cargo build --release --locked \
+            --target x86_64-unknown-linux-musl \
+            --bin nura-agent
+          install -Dm755 \
+            target/x86_64-unknown-linux-musl/release/nura-agent \
+            ../rootfs/staging/bin/nura-agent
+
+      - name: Build gateway (static)
+        working-directory: services
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-s -w -X main.version=${NURA_VERSION}" \
+            -o ../rootfs/staging/bin/gateway ./cmd/gateway
+
+      - name: Build initramfs
+        run: ./scripts/build-initramfs.sh
+
+      - name: Build data image
+        run: ./scripts/make-data-image.sh
+
+      - name: Generate manifest
+        run: |
+          source scripts/VERSIONS.env
+          mkdir -p image/out
+          BUILD_END=$(date +%s)
+          SHA256() {
+              sha256sum "$1" 2>/dev/null | awk '{print $1}' || \
+              shasum -a 256 "$1" | awk '{print $1}'
+          }
+          SIZE() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0; }
+          cat > image/out/manifest.json <<EOF
+          {
+            "nura_version": "${NURA_VERSION}",
+            "kernel_version": "${KERNEL_VERSION}",
+            "musl_version": "${MUSL_VERSION}",
+            "busybox_version": "${BUSYBOX_VERSION}",
+            "rust_version": "${RUST_VERSION}",
+            "go_version": "${GO_VERSION}",
+            "build_duration_seconds": 0,
+            "artifacts": {
+              "bzImage":    {"path": "image/out/bzImage",             "size_bytes": $(SIZE image/out/bzImage),           "sha256": "$(SHA256 image/out/bzImage)"},
+              "initramfs":  {"path": "image/out/initramfs.cpio.gz",   "size_bytes": $(SIZE image/out/initramfs.cpio.gz), "sha256": "$(SHA256 image/out/initramfs.cpio.gz)"},
+              "data_img":   {"path": "image/out/data.img",            "size_bytes": $(SIZE image/out/data.img),          "sha256": "$(SHA256 image/out/data.img)"}
+            }
+          }
+          EOF
+
+      - name: Package release
+        run: |
+          chmod +x scripts/package-release.sh
+          ./scripts/package-release.sh --version "${{ env.NURA_VERSION }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "NuraOS ${{ env.NURA_VERSION }}"
+          body: |
+            ## NuraOS ${{ env.NURA_VERSION }}
+
+            **Kernel:** ${{ env.KERNEL_VERSION }}
+            **Built with:** Rust ${{ env.RUST_VERSION }}, Go ${{ env.GO_VERSION }}
+
+            ### Artifacts
+
+            | File | Description |
+            |------|-------------|
+            | `nuraos-${{ env.NURA_VERSION }}.tar.gz` | Full release archive (bzImage + initramfs + data.img + run-qemu.sh) |
+            | `nuraos-${{ env.NURA_VERSION }}.tar.gz.sha256` | SHA-256 checksum |
+            | `nuraos-${{ env.NURA_VERSION }}-manifest.json` | Build manifest with component hashes |
+
+            ### Quick start
+
+            ```sh
+            tar xzf nuraos-${{ env.NURA_VERSION }}.tar.gz
+            cd nuraos-${{ env.NURA_VERSION }}
+            ./run-qemu.sh
+            ```
+          files: |
+            dist/nuraos-${{ env.NURA_VERSION }}.tar.gz
+            dist/nuraos-${{ env.NURA_VERSION }}.tar.gz.sha256
+            dist/nuraos-${{ env.NURA_VERSION }}-manifest.json
+          draft: false
+          prerelease: ${{ contains(env.NURA_VERSION, '-') }}
