@@ -1,0 +1,92 @@
+# NuraOS x86-64 kernel config fragment
+# Applied on top of tinyconfig via scripts/kernel-config.sh.
+# Only options that differ from tinyconfig (or must be explicitly set) appear here.
+# Use kernel-config.sh to merge this fragment and produce a full .config.
+
+# ----- Architecture basics -----
+CONFIG_64BIT=y
+CONFIG_X86_64=y
+CONFIG_SMP=y
+CONFIG_NR_CPUS=4
+
+# ----- Binary format -----
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+
+# ----- Virtual filesystems -----
+CONFIG_PROC_FS=y
+CONFIG_PROC_SYSCTL=y
+CONFIG_SYSFS=y
+CONFIG_TMPFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+
+# ----- Persistent storage -----
+CONFIG_EXT4_FS=y
+CONFIG_EXT4_USE_FOR_EXT2=y
+
+# ----- Initramfs / initrd -----
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_INITRAMFS_SOURCE=""
+CONFIG_RD_GZIP=y
+CONFIG_RD_XZ=y
+
+# ----- Serial console -----
+CONFIG_TTY=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_VT=n
+
+# ----- Printk -----
+CONFIG_PRINTK=y
+CONFIG_EARLY_PRINTK=y
+
+# ----- virtio block -----
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_VIRTIO_NET=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_SCSI=n
+
+# ----- Networking -----
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+CONFIG_IPV6=n
+CONFIG_NETFILTER=n
+CONFIG_NET_9P=n
+
+# ----- Block layer -----
+CONFIG_BLOCK=y
+CONFIG_BLK_DEV=y
+
+# ----- PCI -----
+CONFIG_PCI=y
+CONFIG_PCI_MSI=y
+
+# ----- Clock / timer -----
+CONFIG_HZ_250=y
+CONFIG_POSIX_TIMERS=y
+
+# ----- Modules: disabled -----
+CONFIG_MODULES=n
+
+# ----- Debug: off -----
+CONFIG_DEBUG_KERNEL=n
+CONFIG_DEBUG_INFO=n
+CONFIG_MAGIC_SYSRQ=n
+CONFIG_KALLSYMS=n
+CONFIG_FTRACE=n
+
+# ----- Misc needed -----
+CONFIG_MULTIUSER=y
+CONFIG_SHMEM=y
+CONFIG_ANON_INODES=y
+CONFIG_EPOLL=y
+CONFIG_SIGNALFD=y
+CONFIG_TIMERFD=y
+CONFIG_EVENTFD=y
+CONFIG_AIO=y
+CONFIG_FILE_LOCKING=y
