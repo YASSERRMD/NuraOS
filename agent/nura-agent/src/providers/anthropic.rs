@@ -38,6 +38,7 @@ impl AnthropicProvider {
     }
 
     /// Try to build from the loaded secrets. Returns `None` if no key is available.
+    #[allow(dead_code)]
     pub fn from_secrets() -> Option<Self> {
         use nura_core::secrets::Secrets;
         let secrets = Secrets::load().ok()?;

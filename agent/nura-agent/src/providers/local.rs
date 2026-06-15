@@ -86,7 +86,8 @@ impl Provider for LocalProvider {
 }
 
 /// Block until llama-server's /health endpoint returns 200 or the timeout
-/// is exceeded.
+/// is exceeded. Called from the agent `run` command in Phase 46+.
+#[allow(dead_code)]
 pub fn wait_for_health(base_url: &str, timeout_secs: u64) -> Result<()> {
     let health_url = format!("{}/health", base_url.trim_end_matches('/'));
     let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);

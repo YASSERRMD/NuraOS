@@ -115,6 +115,7 @@ impl ProviderRegistry {
 
     /// The provider chosen by the config `provider.active` setting,
     /// falling back to the first registered provider.
+    #[allow(dead_code)]
     pub fn default_provider(&self) -> Option<&dyn Provider> {
         self.get(&self.default_name)
             .or_else(|| self.entries.first().map(|(_, p)| p.as_ref()))
@@ -128,6 +129,7 @@ impl ProviderRegistry {
         self.entries.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }

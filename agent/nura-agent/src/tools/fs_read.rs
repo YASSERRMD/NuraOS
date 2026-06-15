@@ -28,6 +28,7 @@ impl Default for FsReadTool {
 }
 
 impl FsReadTool {
+    #[allow(dead_code)]
     pub fn with_prefixes(prefixes: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             allowed_prefixes: prefixes.into_iter().map(|s| s.into()).collect(),
