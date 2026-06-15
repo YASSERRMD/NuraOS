@@ -15,6 +15,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/integrity"
+	"github.com/yasserrmd/nuraos/services/internal/modelpool"
 )
 
 // chatBufPool recycles 4 KiB read buffers across SSE proxy iterations.
@@ -37,8 +38,9 @@ type handlers struct {
 	ts          *tokenStore // nil when auth is disabled (tests)
 	machineID   string
 	hostname    string
-	diskMon     *diskmon.Monitor // nil when disk monitoring is disabled
-	cgMgr       *cgroup.Manager  // nil when cgroup monitoring is disabled
+	diskMon     *diskmon.Monitor  // nil when disk monitoring is disabled
+	cgMgr       *cgroup.Manager   // nil when cgroup monitoring is disabled
+	modelPool   *modelpool.Pool   // nil when model pool is disabled
 }
 
 func newHandlers(socketPath string, store *MetricsStore) *handlers {
@@ -501,6 +503,30 @@ func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {
 		integComp.Detail = "status not available"
 	}
 	components = append(components, integComp)
+
+	// Model lifecycle state from the on-device model pool.
+	modelComp := agent.StatusComponent{Name: "model"}
+	if h.modelPool != nil {
+		state := h.modelPool.State()
+		switch state {
+		case modelpool.StateLoaded:
+			modelComp.Status = "ok"
+			modelComp.Detail = "loaded"
+		case modelpool.StateLoading:
+			modelComp.Status = "ok"
+			modelComp.Detail = "loading"
+		case modelpool.StateUnloaded:
+			modelComp.Status = "ok"
+			modelComp.Detail = "unloaded (lazy load on next request)"
+		case modelpool.StateUnloading:
+			modelComp.Status = "ok"
+			modelComp.Detail = "unloading"
+		}
+	} else {
+		modelComp.Status = "unknown"
+		modelComp.Detail = "model pool not configured"
+	}
+	components = append(components, modelComp)
 
 	overall := "ok"
 	for _, c := range components {

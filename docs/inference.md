@@ -203,3 +203,81 @@ All inference runs on-device. No prompts, completions, or model weights leave
 the machine unless the routing policy is set to `remote_first` or
 `remote_only` in `agent.toml` and a cloud provider API key is configured.
 See [config.md](config.md) for routing policy options.
+
+## Model lifecycle
+
+The gateway manages the on-device llama-server process through a four-state
+lifecycle implemented in `services/internal/modelpool`. This allows the system
+to start inference on first request and release memory when the model is idle.
+
+### State machine
+
+```
+Unloaded --> Loading --> Loaded --> Unloading --> Unloaded
+                ^                                   |
+                +-----------------------------------+
+```
+
+| State | Meaning |
+|-------|---------|
+| `unloaded` | llama-server is stopped; no memory used |
+| `loading` | Start command sent; waiting for service readiness |
+| `loaded` | llama-server is running and accepting requests |
+| `unloading` | Stop command sent; waiting for service to exit |
+
+### Lazy load
+
+The model is not loaded at gateway startup. The first inbound request calls
+`Pool.Acquire`, which sends a `CmdStart` command via the manager control
+socket (`/run/nura-manager.sock`). Subsequent concurrent requests block on
+the same condition variable and all unblock together when `NotifyLoaded` is
+called after the readiness probe succeeds.
+
+`Acquire` returns an error if the model has not become ready within
+`ReadinessTimeout` (default 120 s) or if the calling request's context is
+cancelled.
+
+### Idle timeout auto-unload
+
+`Pool.Run` polls every `IdleTimeout/4`. When the time since the last
+`Release()` call exceeds `IdleTimeout`, the pool sends a `CmdStop` command
+and transitions to `Unloading`. The service is released by the manager and
+the pool transitions to `Unloaded` when `NotifyUnloaded` is called.
+
+Set `IdleTimeout = 0` to disable auto-unload (model stays loaded once started
+until the system shuts down).
+
+### Warm pool
+
+When `WarmPool = true`, the idle-timeout check is skipped if the inference
+cgroup has at least `MemoryMargin` bytes free. This prevents thrashing on
+systems where the model fits comfortably in memory: the model stays loaded as
+long as memory is available and is only evicted when the system is under
+memory pressure.
+
+### Event bus
+
+State transitions publish a `model.state.changed` event on the bus:
+
+```json
+{
+  "type": "model.state.changed",
+  "source": "modelpool",
+  "payload": {
+    "service": "llama-server",
+    "previous": "loading",
+    "current": "loaded"
+  }
+}
+```
+
+### /status surface
+
+`GET /status` includes a `model` component reflecting the current state:
+
+```json
+{ "name": "model", "status": "ok", "detail": "loaded" }
+```
+
+Possible detail values: `loaded`, `loading`, `unloaded (lazy load on next request)`,
+`unloading`. A nil pool (pool not configured) reports `status: "unknown"`.

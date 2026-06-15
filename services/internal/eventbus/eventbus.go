@@ -31,6 +31,9 @@ const (
 	TypeInferenceMemoryOOM    = "inference.memory.oom"     // OOM kill in inference cgroup
 	TypeInferenceModelRefused = "inference.model.refused"  // model load refused by memory guard
 	TypeInferenceCPUStats     = "inference.cpu.stats"      // periodic resource stats snapshot
+
+	// Model lifecycle events (phase 90).
+	TypeModelStateChanged = "model.state.changed" // loaded/unloaded/loading/unloading
 )
 
 // DefaultSubBufSize is the number of events buffered per subscriber before
