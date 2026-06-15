@@ -24,10 +24,11 @@ const (
 	epModels
 	epUpdateStatus
 	epTelemetryStatus
+	epBoard
 	epCount
 )
 
-var epNames = [epCount]string{"healthz", "version", "chat", "tools", "metrics", "status", "config", "models", "update_status", "telemetry_status"}
+var epNames = [epCount]string{"healthz", "version", "chat", "tools", "metrics", "status", "config", "models", "update_status", "telemetry_status", "board"}
 
 // MetricsStore accumulates gateway-level operational counters.
 // All fields use atomic operations; the struct is safe for concurrent use

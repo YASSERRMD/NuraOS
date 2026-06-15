@@ -376,6 +376,31 @@ func (h *handlers) updateStatusHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+const defaultBoardInfoFile = "/data/etc/board.json"
+
+func boardInfoFile() string {
+	if v := os.Getenv("BOARD_INFO_FILE"); v != "" {
+		return v
+	}
+	return defaultBoardInfoFile
+}
+
+// boardHandler serves GET /board.
+// Returns the board description from the board info file, or null when the
+// file is absent (fresh install before board-info.sh has been run).
+func (h *handlers) boardHandler(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epBoard)
+
+	var board json.RawMessage
+	if data, err := os.ReadFile(boardInfoFile()); err == nil {
+		board = json.RawMessage(data)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"board": board,
+	})
+}
+
 // telemetryStatusHandler serves GET /telemetry/status.
 // Reports whether telemetry is enabled, the local file path, the remote URL
 // (if configured), and the last payload written to the local file.
