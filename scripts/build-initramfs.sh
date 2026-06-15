@@ -108,6 +108,33 @@ fi
 # via devtmpfs at boot, but we add console/null as a failsafe.
 # (We cannot use mknod here without root; the cpio header carries device info)
 
+# ----- Firewall config and apply script (Phase 79+) -----
+FIREWALL_CONF="${REPO_ROOT}/rootfs/etc/nura/firewall.conf"
+if [ -f "${FIREWALL_CONF}" ]; then
+    mkdir -p "${STAGING}/etc/nura"
+    install -m 644 "${FIREWALL_CONF}" "${STAGING}/etc/nura/firewall.conf"
+    log "installed firewall.conf"
+fi
+
+FIREWALL_APPLY="${REPO_ROOT}/rootfs/sbin/nura-firewall-apply"
+if [ -f "${FIREWALL_APPLY}" ]; then
+    mkdir -p "${STAGING}/sbin"
+    install -m 755 "${FIREWALL_APPLY}" "${STAGING}/sbin/nura-firewall-apply"
+    log "installed nura-firewall-apply"
+fi
+
+# nft (nftables CLI): copy from host if present so the initramfs can apply rules.
+NFT_BIN=$(command -v nft 2>/dev/null || true)
+if [ -n "${NFT_BIN}" ]; then
+    mkdir -p "${STAGING}/usr/sbin"
+    install -m 755 "${NFT_BIN}" "${STAGING}/usr/sbin/nft"
+    # nft also looks for itself in /sbin on some distros.
+    ln -sf /usr/sbin/nft "${STAGING}/sbin/nft" 2>/dev/null || true
+    log "installed nft from ${NFT_BIN}"
+else
+    log "NOTE: nft not found on host; firewall rules will be skipped at boot"
+fi
+
 # ----- CPU profile config and scripts (Phase 77+) -----
 CPU_PROFILE_CONF="${REPO_ROOT}/rootfs/etc/nura/cpu-profile.conf"
 if [ -f "${CPU_PROFILE_CONF}" ]; then
