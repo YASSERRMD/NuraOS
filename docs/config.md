@@ -171,3 +171,57 @@ nura-agent doctor
 
 Doctor checks config, secrets redaction, filesystem layout, and provider
 availability. All values are shown with secrets replaced by `[REDACTED]`.
+
+---
+
+## Canonical config snapshot (configmgr)
+
+Phase 97 introduced a structured, versioned config store at
+`/data/config/nura.json` managed by the `configmgr` package. This is separate
+from the TOML-based agent config above and covers the full system: agent
+parameters, gateway settings, firewall rules, and static routing.
+
+### JSON schema
+
+```json
+{
+  "version": 3,
+  "agent": {
+    "model_path": "/data/models/qwen2.5-3b.gguf",
+    "context_len": 4096,
+    "threads": 4
+  },
+  "gateway": {
+    "port": 8080,
+    "bind_lan": false,
+    "rate_rps": 10
+  },
+  "firewall": {
+    "rules": [
+      { "action": "allow", "proto": "tcp", "port": 8080, "src": "127.0.0.1/8" },
+      { "action": "deny",  "proto": "any",  "port": 0 }
+    ]
+  },
+  "routing": {
+    "default_gateway": "",
+    "static_routes": {}
+  }
+}
+```
+
+### Atomic apply
+
+`configmgr.Store.Apply` validates the config, writes to a temp file, then
+calls `rename(2)` atomically. If validation fails, the live file is untouched.
+
+### Drift detection
+
+`Store.Diff(running)` compares the disk snapshot to a live config struct and
+returns a `DriftReport` listing every differing field with its snapshot and
+running values.
+
+### Version history and rollback
+
+Every successful apply appends a JSON line to `/data/config/history.jsonl`.
+Up to 50 entries are retained. `Store.RollbackTo(version)` re-validates and
+atomically applies a previous snapshot, recording the rollback as a new entry.
