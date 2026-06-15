@@ -11,6 +11,7 @@ import (
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
+	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 	"github.com/yasserrmd/nuraos/services/internal/identity"
 	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/lifecycle"
@@ -138,11 +139,22 @@ func Run(dir string) error {
 
 	_ = timeMgr // available for future service injection
 
+	// Event bus: in-process pub/sub for system events (service lifecycle, disk, OOM).
+	bus := eventbus.NewBus()
+	evtSrv := eventbus.NewServer(eventbus.SocketPath, bus, log)
+	go func() {
+		if err := evtSrv.Serve(ctx); err != nil {
+			log.Warn("eventbus socket error", "err", err)
+		}
+	}()
+
 	// Disk space monitor: automatic reclaim at warn, log at critical.
 	diskMon := &diskmon.Monitor{
 		Path: dataDir,
 		Log:  log,
 		OnWarn: func(u diskmon.Usage) {
+			bus.Publish(eventbus.NewEvent(eventbus.TypeDiskWarn, "diskmon",
+				map[string]any{"path": dataDir, "used_pct": u.UsedPct}))
 			freed, err := diskmon.Reclaim(diskmon.ReclaimOptions{
 				DataDir:    dataDir,
 				SessionCap: 512 * 1024 * 1024,
@@ -155,12 +167,15 @@ func Run(dir string) error {
 			}
 		},
 		OnCritical: func(u diskmon.Usage) {
+			bus.Publish(eventbus.NewEvent(eventbus.TypeDiskCritical, "diskmon",
+				map[string]any{"path": dataDir, "used_pct": u.UsedPct}))
 			log.Error("disk critical: new sessions will be refused", "used_pct", u.UsedPct)
 		},
 	}
 	go diskMon.Run(ctx)
 
 	mgr := lifecycle.NewManager(log, jw)
+	mgr.SetBus(bus)
 
 	// Start the control socket server so nuractl can query and control services.
 	names := make([]string, len(plan.Order))

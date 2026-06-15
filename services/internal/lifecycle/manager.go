@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/cgroup"
+	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/sockact"
 	"github.com/yasserrmd/nuraos/services/internal/unit"
@@ -31,6 +32,7 @@ type Manager struct {
 	mu       sync.Mutex
 	statuses map[string]*serviceStatus
 	procs    map[string]*serviceRun
+	bus      *eventbus.Bus
 }
 
 // NewManager creates a Manager with the given logger.
@@ -55,6 +57,24 @@ func (m *Manager) CgroupManager() *cgroup.Manager { return m.cgMgr }
 
 // Journal returns the writer in use, or nil if journaling is disabled.
 func (m *Manager) Journal() *journal.Writer { return m.journal }
+
+// SetBus attaches an event bus for publishing service lifecycle events.
+// May be called at any time; it is safe to call concurrently.
+func (m *Manager) SetBus(b *eventbus.Bus) {
+	m.mu.Lock()
+	m.bus = b
+	m.mu.Unlock()
+}
+
+// publishEvent sends ev on the bus if one is attached. Never blocks.
+func (m *Manager) publishEvent(ev eventbus.Event) {
+	m.mu.Lock()
+	b := m.bus
+	m.mu.Unlock()
+	if b != nil {
+		b.Publish(ev)
+	}
+}
 
 // Status returns a snapshot of the named service's status.
 func (m *Manager) Status(name string) (StatusSnapshot, bool) {
@@ -136,6 +156,8 @@ func (m *Manager) ShutdownPlan(plan []*unit.Unit) {
 		if status != nil {
 			_ = status.transition(StateInactive, "stopped")
 		}
+		m.publishEvent(eventbus.NewEvent(eventbus.TypeServiceStopped, "lifecycle",
+			map[string]any{"service": u.Name}))
 	}
 }
 
@@ -428,6 +450,8 @@ func (m *Manager) restartLoop(ctx context.Context, u *unit.Unit, run *serviceRun
 				_ = status.transition(StateReady, "launched")
 			}
 			_ = status.transition(StateRunning, "ready -> running")
+			m.publishEvent(eventbus.NewEvent(eventbus.TypeServiceStarted, "lifecycle",
+				map[string]any{"service": u.Name, "pid": cmd.Process.Pid}))
 
 			exitErr := cmd.Wait()
 			if ctx.Err() != nil {
@@ -457,6 +481,8 @@ func (m *Manager) restartLoop(ctx context.Context, u *unit.Unit, run *serviceRun
 
 			if !shouldRestart {
 				_ = status.transition(StateFailed, fmt.Sprintf("exit %d; policy=%s", exitCode, policy))
+				m.publishEvent(eventbus.NewEvent(eventbus.TypeServiceFailed, "lifecycle",
+					map[string]any{"service": u.Name, "exit_code": exitCode, "policy": string(policy)}))
 				return
 			}
 

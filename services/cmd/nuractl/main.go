@@ -15,6 +15,7 @@
 //	nuractl disable <service>       # mark service disabled
 //	nuractl poweroff                # graceful shutdown then power off
 //	nuractl reboot                  # graceful shutdown then reboot
+//	nuractl events                  # tail system events from the event bus
 //
 // Flags:
 //
@@ -23,14 +24,17 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
+	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 )
 
 func main() {
@@ -102,6 +106,8 @@ func main() {
 		cmdDisable(client, rest[0], outputJSON)
 	case "reclaim":
 		cmdReclaim(outputJSON)
+	case "events":
+		cmdEvents(outputJSON)
 	case "poweroff":
 		cmdShutdown(client, outputJSON, false)
 	case "reboot":
@@ -202,6 +208,41 @@ func cmdDisable(c *ctlsock.Client, svc string, asJSON bool) {
 	fmt.Println(resp.Message)
 }
 
+func cmdEvents(asJSON bool) {
+	conn, err := net.Dial("unix", eventbus.SocketPath)
+	if err != nil {
+		fatalf("connect to event bus: %v (is nura-manager running?)", err)
+	}
+	defer conn.Close()
+
+	if _, err := fmt.Fprintf(conn, `{"subscribe":true}`+"\n"); err != nil {
+		fatalf("subscribe: %v", err)
+	}
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if asJSON {
+			fmt.Println(line)
+			continue
+		}
+		var ev eventbus.Event
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			fmt.Println(line)
+			continue
+		}
+		payload := ""
+		if ev.Payload != nil {
+			b, _ := json.Marshal(ev.Payload)
+			payload = " " + string(b)
+		}
+		fmt.Printf("%s  %-24s  %s%s\n", ev.At, ev.Type, ev.Source, payload)
+	}
+	if err := scanner.Err(); err != nil {
+		fatalf("event stream: %v", err)
+	}
+}
+
 func cmdShutdown(c *ctlsock.Client, asJSON bool, reboot bool) {
 	cmd := ctlsock.CmdPoweroff
 	label := "poweroff"
@@ -286,6 +327,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  reclaim                   Free space by trimming sessions and logs")
 	fmt.Fprintln(os.Stderr, "  poweroff                  Graceful shutdown then power off")
 	fmt.Fprintln(os.Stderr, "  reboot                    Graceful shutdown then reboot")
+	fmt.Fprintln(os.Stderr, "  events                    Tail system events from the event bus")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json          JSON output")
