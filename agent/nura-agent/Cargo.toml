@@ -1,0 +1,12 @@
+[package]
+name = "nura-agent"
+version = "0.1.0"
+edition = "2021"
+description = "NuraOS AI agent binary"
+
+[[bin]]
+name = "nura-agent"
+path = "src/main.rs"
+
+[dependencies]
+nura-core = { path = "../nura-core" }

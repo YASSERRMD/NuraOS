@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "nura-agent",
+    "nura-core",
+]
+resolver = "2"
