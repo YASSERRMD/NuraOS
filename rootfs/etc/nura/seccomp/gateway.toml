@@ -13,10 +13,11 @@ syscalls = [
   "getresuid", "getresgid",
   "setpgid", "getpgid", "setsid",
 
-  # process management
+  # process management (wait4/waitid needed if su forks before exec'ing sh)
   "clone", "clone3",
   "exit", "exit_group",
   "kill", "tgkill",
+  "wait4", "waitid",
   "getpid", "getppid", "gettid",
 
   # memory

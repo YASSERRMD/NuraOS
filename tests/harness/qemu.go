@@ -104,13 +104,19 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// and -serial unix:SOCK so the serial console is accessible via a socket
 	// rather than stdio. This lets us both capture boot output and send
 	// REPL commands programmatically.
+	// server (no nowait): QEMU waits for the client to connect before booting,
+	// ensuring we capture all serial output from the very first kernel message.
+	// virtio-rng-pci: provides hardware entropy so the guest CSPRNG seeds
+	// immediately and gateway startup is not delayed by entropy starvation.
 	args := []string{
 		"-machine", "q35,accel=kvm:tcg",
 		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
-		"-serial", fmt.Sprintf("unix:%s,server,nowait", serialSock),
+		"-object", "rng-builtin,id=rng0",
+		"-device", "virtio-rng-pci,rng=rng0",
+		"-serial", fmt.Sprintf("unix:%s,server", serialSock),
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
