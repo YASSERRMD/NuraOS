@@ -12,10 +12,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	_ "net/http/pprof" // registers pprof handlers on http.DefaultServeMux
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -28,10 +30,10 @@ var version = "dev"
 var zeroTime time.Time
 
 const (
-	defaultPort      = "8080"
-	agentSocket      = "/run/nura-agent.sock"
-	socketProbeTO    = 500 * time.Millisecond
-	shutdownTimeout  = 15 * time.Second
+	defaultPort     = "8080"
+	agentSocket     = "/run/nura-agent.sock"
+	socketProbeTO   = 500 * time.Millisecond
+	shutdownTimeout = 15 * time.Second
 )
 
 func main() {
@@ -144,11 +146,44 @@ func main() {
 		}()
 	}
 
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		slog.Error("gateway terminated", "err", err)
-		os.Exit(1)
+	// Socket activation: if LISTEN_FDS=1, the manager pre-opened the socket
+	// and passed it as fd 3. Use it instead of calling ListenAndServe.
+	if ln := socketActivatedListener(); ln != nil {
+		slog.Info("socket-activated; using inherited fd", "addr", ln.Addr())
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("gateway terminated", "err", err)
+			os.Exit(1)
+		}
+	} else {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("gateway terminated", "err", err)
+			os.Exit(1)
+		}
 	}
 	slog.Info("gateway shutdown complete")
+}
+
+// socketActivatedListener returns a net.Listener from the socket passed by
+// the service manager via socket activation (LISTEN_FDS=1, fd 3).
+// Returns nil if not socket-activated.
+func socketActivatedListener() net.Listener {
+	if os.Getenv("LISTEN_FDS") != "1" {
+		return nil
+	}
+	const activationFD = 3
+	f := os.NewFile(uintptr(activationFD), "listen-fd")
+	if f == nil {
+		slog.Warn("LISTEN_FDS=1 but fd 3 is not valid")
+		return nil
+	}
+	ln, err := net.FileListener(f)
+	f.Close()
+	if err != nil {
+		slog.Warn("could not create listener from inherited fd", "err", err)
+		return nil
+	}
+	_ = strconv.Itoa // imported for future LISTEN_PID validation
+	return ln
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
