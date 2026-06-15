@@ -99,7 +99,9 @@ where
 
         match rx.recv_timeout(remaining) {
             Ok(Ok(event)) => {
-                if let Some(should_break) = handle_event(event, &mut output, &mut partial_calls, on_token)? {
+                if let Some(should_break) =
+                    handle_event(event, &mut output, &mut partial_calls, on_token)?
+                {
                     if should_break {
                         break;
                     }
@@ -113,10 +115,7 @@ where
                 output.timed_out = true;
                 output.stop_reason = StopReason::Error;
                 cancel.cancel();
-                warn!(
-                    partial_text_len = output.text.len(),
-                    "stream: recv timeout"
-                );
+                warn!(partial_text_len = output.text.len(), "stream: recv timeout");
                 break;
             }
             Err(RecvTimeoutError::Disconnected) => {
@@ -382,9 +381,7 @@ mod tests {
     #[test]
     fn timeout_closes_cleanly() {
         let cancel = CancelToken::new();
-        let events: Vec<Result<StreamEvent>> = vec![
-            Ok(StreamEvent::token("slow")),
-        ];
+        let events: Vec<Result<StreamEvent>> = vec![Ok(StreamEvent::token("slow"))];
 
         let mut tokens = Vec::new();
         let out = aggregate(
@@ -396,7 +393,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(out.timed_out || !out.text.is_empty(), "partial result expected");
+        assert!(
+            out.timed_out || !out.text.is_empty(),
+            "partial result expected"
+        );
     }
 
     #[test]
@@ -420,4 +420,3 @@ mod tests {
         assert_eq!(received, vec!["a", "b", "c"]);
     }
 }
-

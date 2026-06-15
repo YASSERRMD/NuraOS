@@ -51,7 +51,10 @@ impl std::str::FromStr for Verbosity {
             "concise" | "brief" => Ok(Verbosity::Concise),
             "normal" | "standard" => Ok(Verbosity::Normal),
             "verbose" | "detailed" => Ok(Verbosity::Verbose),
-            other => Err(format!("unknown verbosity '{}'; use concise, normal, or verbose", other)),
+            other => Err(format!(
+                "unknown verbosity '{}'; use concise, normal, or verbose",
+                other
+            )),
         }
     }
 }
@@ -231,7 +234,10 @@ mod tests {
         let loader = PromptLoader::new(&path);
         drop(guard); // remove the file
         loader.reload().unwrap();
-        assert!(loader.prompt().contains("NuraOS"), "should fall back to default");
+        assert!(
+            loader.prompt().contains("NuraOS"),
+            "should fall back to default"
+        );
     }
 
     #[test]
@@ -242,7 +248,10 @@ mod tests {
             ..Default::default()
         };
         let prompt = loader.with_persona(&persona);
-        assert!(prompt.contains("concisely"), "concise instruction must be present");
+        assert!(
+            prompt.contains("concisely"),
+            "concise instruction must be present"
+        );
     }
 
     #[test]
@@ -253,7 +262,10 @@ mod tests {
             ..Default::default()
         };
         let prompt = loader.with_persona(&persona);
-        assert!(prompt.contains("detailed"), "verbose instruction must be present");
+        assert!(
+            prompt.contains("detailed"),
+            "verbose instruction must be present"
+        );
     }
 
     #[test]

@@ -41,10 +41,7 @@ impl Tool for SystemInfoTool {
             .trim()
             .to_string();
 
-        let uptime_seconds = parse_uptime(
-            &read_proc_string("/proc/uptime")
-                .unwrap_or_default(),
-        );
+        let uptime_seconds = parse_uptime(&read_proc_string("/proc/uptime").unwrap_or_default());
 
         let (memory_total_kb, memory_free_kb, memory_available_kb) =
             parse_meminfo(&read_proc_string("/proc/meminfo").unwrap_or_default());

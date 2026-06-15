@@ -154,7 +154,11 @@ where
         }
 
         if iterations >= config.max_iterations {
-            warn!(iterations, max = config.max_iterations, "turn: max_iterations exceeded");
+            warn!(
+                iterations,
+                max = config.max_iterations,
+                "turn: max_iterations exceeded"
+            );
             return Err(NuraError::BudgetExceeded(format!(
                 "turn exceeded max_iterations ({})",
                 config.max_iterations
@@ -216,7 +220,13 @@ where
 
         // Tool-call iteration: append assistant message and execute tools.
         append_assistant_message(messages, &agg);
-        let tool_results = execute_tools(&agg.tool_calls, registry, config, &mut tool_budget, &mut transcript);
+        let tool_results = execute_tools(
+            &agg.tool_calls,
+            registry,
+            config,
+            &mut tool_budget,
+            &mut transcript,
+        );
         append_tool_results(messages, tool_results);
     };
 
@@ -233,8 +243,7 @@ fn append_assistant_message(messages: &mut Vec<Message>, agg: &AggregatedOutput)
         parts.push(ContentPart::text(agg.text.clone()));
     }
     for tc in &agg.tool_calls {
-        let arguments = serde_json::from_str(&tc.arguments_json)
-            .unwrap_or(serde_json::Value::Null);
+        let arguments = serde_json::from_str(&tc.arguments_json).unwrap_or(serde_json::Value::Null);
         parts.push(ContentPart::ToolCallRequest {
             id: tc.id.clone(),
             name: tc.name.clone(),
@@ -266,8 +275,8 @@ fn execute_tools(
             arguments_json: tc.arguments_json.clone(),
         });
 
-        let args: serde_json::Value = serde_json::from_str(&tc.arguments_json)
-            .unwrap_or(serde_json::Value::Null);
+        let args: serde_json::Value =
+            serde_json::from_str(&tc.arguments_json).unwrap_or(serde_json::Value::Null);
 
         let (output, error) = match registry.call(&tc.name, args, config.call_timeout, budget) {
             Ok(r) => (r.output, None),

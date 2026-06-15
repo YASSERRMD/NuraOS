@@ -110,16 +110,15 @@ impl ProviderRegistry {
         // These are registered when opt-in env vars are set.
         #[cfg(feature = "remote-providers")]
         {
-            use crate::providers::OpenAiCompatProvider;
             use crate::providers::openai::{
-                OLLAMA_BASE_URL, OLLAMA_DEFAULT_MODEL,
-                LM_STUDIO_BASE_URL, LM_STUDIO_DEFAULT_MODEL,
+                LM_STUDIO_BASE_URL, LM_STUDIO_DEFAULT_MODEL, OLLAMA_BASE_URL, OLLAMA_DEFAULT_MODEL,
             };
+            use crate::providers::OpenAiCompatProvider;
 
             // Ollama: NURA_OLLAMA=1 enables; NURA_OLLAMA_MODEL overrides model.
             if std::env::var(ENV_OLLAMA).as_deref() == Ok("1") {
-                let model = std::env::var(ENV_OLLAMA_MODEL)
-                    .unwrap_or_else(|_| OLLAMA_DEFAULT_MODEL.into());
+                let model =
+                    std::env::var(ENV_OLLAMA_MODEL).unwrap_or_else(|_| OLLAMA_DEFAULT_MODEL.into());
                 let p = OpenAiCompatProvider::new(None::<String>, OLLAMA_BASE_URL, model);
                 entries.push((
                     ProviderEntry {
@@ -150,11 +149,11 @@ impl ProviderRegistry {
 
             // Custom endpoint: NURA_CUSTOM_ENDPOINT=http://host:port
             if let Ok(base_url) = std::env::var(ENV_CUSTOM_ENDPOINT) {
-                let model = std::env::var(ENV_CUSTOM_MODEL)
-                    .unwrap_or_else(|_| "custom".into());
+                let model = std::env::var(ENV_CUSTOM_MODEL).unwrap_or_else(|_| "custom".into());
                 // Custom endpoints may not need a key; pass secrets.openai_api_key
                 // as a fallback for endpoints that require one.
-                let key = secrets.openai_api_key
+                let key = secrets
+                    .openai_api_key
                     .as_ref()
                     .map(|s| s.expose().to_string());
                 let p = OpenAiCompatProvider::new(key, &base_url, model);

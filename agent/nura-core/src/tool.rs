@@ -358,12 +358,10 @@ impl Tool for EchoTool {
     }
 
     fn execute(&self, args: Value) -> Result<ToolResult> {
-        let msg = args["message"]
-            .as_str()
-            .ok_or_else(|| NuraError::Tool {
-                name: self.name().to_string(),
-                detail: "message field missing".to_string(),
-            })?;
+        let msg = args["message"].as_str().ok_or_else(|| NuraError::Tool {
+            name: self.name().to_string(),
+            detail: "message field missing".to_string(),
+        })?;
         Ok(ToolResult::json(serde_json::json!({ "echo": msg })))
     }
 }
@@ -508,8 +506,12 @@ mod tests {
         let mut b = ToolBudget::new(1);
         r.call("echo", json!({"message": "first"}), short_timeout(), &mut b)
             .unwrap();
-        let result = r.call("echo", json!({"message": "second"}), short_timeout(), &mut b);
+        let result = r.call(
+            "echo",
+            json!({"message": "second"}),
+            short_timeout(),
+            &mut b,
+        );
         assert!(result.is_err(), "second call should exhaust budget");
     }
 }
-
