@@ -47,7 +47,34 @@ The configuration starts from `tinyconfig` (the smallest possible valid config)
 and adds exactly what NuraOS needs. Loadable modules are disabled; everything
 is compiled in. This minimises attack surface and eliminates the module loader.
 
-See Phase 03 for the config fragment and rationale.
+Config fragment: [kernel/configs/nuraos_x86_64_defconfig](../kernel/configs/nuraos_x86_64_defconfig)
+
+### Enabled options
+
+| Option                        | Reason                                      |
+|-------------------------------|---------------------------------------------|
+| CONFIG_64BIT                  | x86-64 target                               |
+| CONFIG_BINFMT_ELF             | run ELF binaries (BusyBox, agent, server)   |
+| CONFIG_PROC_FS / SYSFS        | /proc and /sys required by userland         |
+| CONFIG_TMPFS                  | /tmp, /dev/shm                              |
+| CONFIG_DEVTMPFS               | automatic device node creation              |
+| CONFIG_EXT4_FS                | /data persistent partition                  |
+| CONFIG_BLK_DEV_INITRD         | load initramfs from kernel command line     |
+| CONFIG_SERIAL_8250_CONSOLE    | ttyS0 serial console in QEMU               |
+| CONFIG_VIRTIO_PCI / BLK / NET | virtio block (/data) and network in QEMU   |
+| CONFIG_VIRTIO_CONSOLE         | virtio serial console alternative          |
+| CONFIG_INET                   | TCP/IP for agent HTTP API and providers    |
+
+### Disabled options
+
+| Option             | Reason                                           |
+|--------------------|--------------------------------------------------|
+| CONFIG_MODULES     | no module loader; everything built in            |
+| CONFIG_VT          | no virtual terminal; serial only                 |
+| CONFIG_DEBUG_KERNEL | strip debug overhead from the appliance image   |
+| CONFIG_IPV6        | not needed yet; reduces surface area            |
+| CONFIG_NETFILTER   | no firewall needed at this stage                |
+| CONFIG_SCSI        | virtio-blk does not need SCSI layer             |
 
 ## Build
 
