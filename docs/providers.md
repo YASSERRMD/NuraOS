@@ -121,6 +121,76 @@ A test in each provider crate checks that it is not re-exported from
 The active provider is selected by `routing_policy` in `agent.toml`
 (see [config.md](config.md)).
 
+## Configuration Examples
+
+### OpenAI
+
+```toml
+# /data/etc/agent.toml
+[provider]
+name = "openai"
+model = "gpt-4o-mini"
+base_url = "https://api.openai.com"
+```
+
+```toml
+# /data/etc/secrets.toml
+openai_api_key = "sk-..."
+```
+
+```sh
+# Or via environment variable:
+export OPENAI_API_KEY=sk-...
+```
+
+### vLLM (local OpenAI-compatible server)
+
+```toml
+[provider]
+name = "openai"
+model = "meta-llama/Llama-3.1-8B-Instruct"
+base_url = "http://0.0.0.0:8000"
+```
+
+No API key required for a private vLLM instance.
+
+### LiteLLM proxy / sovereign gateway
+
+```toml
+[provider]
+name = "openai"
+model = "anthropic/claude-haiku-4-5-20251001"
+base_url = "http://litellm-proxy:4000"
+```
+
+```sh
+export NURA_GATEWAY_TOKEN=your-litellm-key
+```
+
+### Anthropic direct
+
+```toml
+[provider]
+name = "anthropic"
+model = "claude-haiku-4-5-20251001"
+base_url = "https://api.anthropic.com"  # default; omit for standard endpoint
+```
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Local (llama.cpp, offline)
+
+```toml
+[provider]
+name = "local"
+# base_url defaults to http://127.0.0.1:8081
+```
+
+No API key required. Run `bash scripts/fetch-model.sh` to download a model
+then boot normally; the supervisor starts llama-server automatically.
+
 ## Adding a Provider
 
 1. Implement `Provider` for your type in its own module.
