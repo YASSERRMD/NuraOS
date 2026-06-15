@@ -154,3 +154,66 @@ find_open_issue_by_title() {
         2>/dev/null \
         | jq -r '.[0].number // ""'
 }
+
+# ---------------------------------------------------------------------------
+# Issue body for a new failure
+# ---------------------------------------------------------------------------
+failure_body() {
+    local run_line=""
+    [[ -n "${RUN_URL}" ]] && run_line="**CI run:** ${RUN_URL}"
+    local bundle_line=""
+    [[ -n "${BUNDLE}" ]] && bundle_line="**Evidence bundle:** see CI artifacts (path: \`${BUNDLE}\`)"
+
+    printf '%s\n' \
+        "**Test suite:** \`${SUITE}\`" \
+        "**Test case:** \`${CASE}\`" \
+        "**Status:** FAIL" \
+        "**Error:** ${MESSAGE}" \
+        "" \
+        "**Commit:** \`${COMMIT}\`" \
+        "**Run ID:** \`${RUN_ID}\`" \
+        "${run_line}" \
+        "${bundle_line}" \
+        "" \
+        "---" \
+        "" \
+        "_First seen: ${DATE}_" \
+        "" \
+        "<!-- nuraos-sig: ${SIG} -->"
+}
+
+# ---------------------------------------------------------------------------
+# Ensure labels exist (idempotent -- ignore error if already present)
+# ---------------------------------------------------------------------------
+ensure_label() {
+    local name="$1" color="$2" desc="$3"
+    gh_exec label create "${name}" \
+        --color "${color}" \
+        --description "${desc}" \
+        --force 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Create a new issue for this failure
+# ---------------------------------------------------------------------------
+create_issue() {
+    local title="[${SUITE}] ${CASE} failing"
+    local body
+    body=$(failure_body)
+
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "[dry-run] gh issue create --title \"${title}\" --label test-failure,suite:${SUITE} --body <failure-body>"
+        echo "[dry-run] body would contain: <!-- nuraos-sig: ${SIG} -->"
+        return
+    fi
+
+    ensure_label "test-failure"  "d73a4a" "Automated test failure"
+    ensure_label "suite:${SUITE}" "0075ca" "Suite: ${SUITE}"
+
+    local url
+    url=$(gh issue create \
+        --title "${title}" \
+        --label "test-failure,suite:${SUITE}" \
+        --body "${body}")
+    echo "[file-issue] created issue: ${url}"
+}
