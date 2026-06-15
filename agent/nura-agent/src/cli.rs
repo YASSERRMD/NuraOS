@@ -16,6 +16,7 @@ pub fn run() {
     match subcommand {
         "run" => cmd_run(),
         "repl" => crate::repl_cmd::cmd_repl(),
+        "verify-provenance" => cmd_verify_provenance(&args),
         "version" | "--version" | "-V" => cmd_version(),
         "doctor" => cmd_doctor(),
         "--help" | "-h" | "help" => cmd_help(),
@@ -45,11 +46,41 @@ fn cmd_help() {
     println!("    nura-agent [SUBCOMMAND]");
     println!();
     println!("SUBCOMMANDS:");
-    println!("    run        Start the NuraOS agent (default)");
-    println!("    repl       Start an interactive serial REPL session");
-    println!("    version    Print the version string");
-    println!("    doctor     Check environment and configuration");
-    println!("    help       Print this help message");
+    println!("    run                  Start the NuraOS agent (default)");
+    println!("    repl                 Start an interactive serial REPL session");
+    println!("    verify-provenance    Walk the provenance chain and report integrity");
+    println!("    version              Print the version string");
+    println!("    doctor               Check environment and configuration");
+    println!("    help                 Print this help message");
+}
+
+fn cmd_verify_provenance(args: &[String]) {
+    // Usage: nura-agent verify-provenance [--dir <path>]
+    let dir = {
+        let mut d = "/data/sessions";
+        let mut it = args.iter().skip(2);
+        while let Some(flag) = it.next() {
+            if flag == "--dir" {
+                if let Some(val) = it.next() {
+                    d = val.as_str();
+                }
+            }
+        }
+        d
+    };
+
+    match nura_core::provenance::verify_chain(dir) {
+        Ok(0) => {
+            println!("provenance: no entries found in {}", dir);
+        }
+        Ok(n) => {
+            println!("provenance: OK -- {} entries verified in {}", n, dir);
+        }
+        Err(e) => {
+            eprintln!("provenance: INTEGRITY FAILURE -- {}", e);
+            process::exit(1);
+        }
+    }
 }
 
 fn cmd_run() {
