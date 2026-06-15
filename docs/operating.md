@@ -133,6 +133,75 @@ nuractl disable gateway
 
 ---
 
+## Self-test suite
+
+NuraOS ships a built-in health check suite (`selftest`) that verifies kernel
+features, storage durability, and network posture. Checks are categorised as
+`kernel`, `storage`, `network`, or `agent`. A subset of checks is designated
+the _boot set_ and runs automatically at startup to gate system readiness.
+
+### Running all checks
+
+```sh
+nuractl selftest
+```
+
+Example human-readable output:
+
+```
+[OK  ] kernel       cgroups    cgroup v2 with cpu and memory controllers (2ms)
+[OK  ] kernel       namespaces mount and PID namespaces available (0ms)
+[OK  ] kernel       rng        4096 bits available (0ms)
+[OK  ] kernel       seccomp    seccomp BPF with kill_process action (0ms)
+[OK  ] network      firewall   nftables firewall active (1ms)
+[OK  ] network      network    loopback stack operational (connection refused as expected) (3ms)
+[OK  ] storage      storage    write/fsync/read verified on /data (5ms)
+
+Overall: pass  pass=7 fail=0 skip=0 (11ms)
+```
+
+### Boot-set only
+
+Runs only the minimal subset that gates system readiness:
+
+```sh
+nuractl selftest --boot
+```
+
+### Filtering by category
+
+```sh
+nuractl selftest --category kernel
+nuractl selftest --category storage
+nuractl selftest --category network
+```
+
+### JSON output
+
+```sh
+nuractl selftest --json
+```
+
+Returns a JSON object with `results`, `pass`, `fail`, `skip`, `overall`, and
+`elapsed_ms`. Exit code is 2 when any check fails, 0 when all pass or skip.
+
+### Check catalogue
+
+| Name | Category | Boot | What it checks |
+|------|----------|------|----------------|
+| `rng` | kernel | yes | `/proc/sys/kernel/random/entropy_avail` >= 64 bits |
+| `cgroups` | kernel | yes | cgroup v2 mounted; `cpu` and `memory` controllers present |
+| `namespaces` | kernel | no | `/proc/self/ns/mnt` and `/proc/self/ns/pid` visible |
+| `seccomp` | kernel | no | `/proc/sys/kernel/seccomp/actions_avail` readable |
+| `storage` | storage | yes | write + fsync + read a 32-byte test file on `/data` |
+| `network` | network | no | loopback interface up; TCP stack reachable on 127.0.0.1 |
+| `firewall` | network | no | nftables conntrack or iptables rules detected |
+
+Checks skip gracefully on non-Linux platforms. The `storage` check falls back
+to `$TMPDIR` when `/data` is not mounted (useful in CI environments).
+
+---
+
 ## Build
 
 ```sh

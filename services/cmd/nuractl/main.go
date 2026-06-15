@@ -28,6 +28,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -41,6 +42,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 	"github.com/yasserrmd/nuraos/services/internal/history"
 	"github.com/yasserrmd/nuraos/services/internal/pkgmgr"
+	"github.com/yasserrmd/nuraos/services/internal/selftest"
 	"github.com/yasserrmd/nuraos/services/internal/update"
 )
 
@@ -121,6 +123,8 @@ func main() {
 		cmdPkg(rest, outputJSON)
 	case "events":
 		cmdEvents(outputJSON)
+	case "selftest":
+		cmdSelftest(rest, outputJSON)
 	case "poweroff":
 		cmdShutdown(client, outputJSON, false)
 	case "reboot":
@@ -578,6 +582,49 @@ func cmdPkg(args []string, asJSON bool) {
 	}
 }
 
+func cmdSelftest(args []string, asJSON bool) {
+	boot := false
+	category := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--boot":
+			boot = true
+		case "--category":
+			i++
+			if i >= len(args) {
+				fatalf("selftest --category requires a value (kernel|storage|network|agent)")
+			}
+			category = args[i]
+		}
+	}
+
+	var r *selftest.Runner
+	if boot {
+		r = selftest.NewBootRunner()
+	} else {
+		r = selftest.New()
+	}
+	if category != "" {
+		r = r.FilterCategory(selftest.Category(category))
+	}
+
+	ctx := context.Background()
+	rep := r.Run(ctx)
+
+	if asJSON {
+		printJSON(rep)
+		if rep.Fail > 0 {
+			os.Exit(2)
+		}
+		return
+	}
+
+	fmt.Print(selftest.FormatHuman(rep))
+	if rep.Fail > 0 {
+		os.Exit(2)
+	}
+}
+
 func cmdReclaim(asJSON bool) {
 	dataDir := os.Getenv("NURA_DATA_DIR")
 	if dataDir == "" {
@@ -647,6 +694,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  pkg install <file.nupkg>  Install a signed package")
 	fmt.Fprintln(os.Stderr, "  pkg list                  List installed packages")
 	fmt.Fprintln(os.Stderr, "  pkg remove  <name>        Remove an installed package")
+	fmt.Fprintln(os.Stderr, "  selftest [--boot] [--category kernel|storage|network|agent]")
+	fmt.Fprintln(os.Stderr, "                            Run built-in health self-tests")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json          JSON output")
