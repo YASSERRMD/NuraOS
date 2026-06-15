@@ -40,6 +40,7 @@ const (
 
 // prctl constants not in syscall package.
 const (
+	prSetNoNewPrivs  = 38
 	prSetSeccomp     = 22
 	seccompModeFilter = 2
 )
@@ -87,9 +88,8 @@ func buildFilter(nrs []uint32, defaultAction uint32) []syscall.SockFilter {
 // Apply installs the profile as a seccomp BPF filter on the calling process.
 // The filter is inherited across fork and exec.
 //
-// The caller must have CAP_SYS_ADMIN or must have previously set
-// PR_SET_NO_NEW_PRIVS. When running as root (service manager), CAP_SYS_ADMIN
-// is available so PR_SET_NO_NEW_PRIVS is not required.
+// PR_SET_NO_NEW_PRIVS is set unconditionally before the filter so that Apply
+// works for both privileged (root/CAP_SYS_ADMIN) and unprivileged callers.
 func Apply(p *Profile, mode Mode) error {
 	if p == nil {
 		return nil
@@ -114,6 +114,13 @@ func Apply(p *Profile, mode Mode) error {
 	filter := buildFilter(nrs, defaultAction)
 	if len(filter) > 65535 {
 		return fmt.Errorf("seccomp: filter too large (%d instructions)", len(filter))
+	}
+
+	// PR_SET_NO_NEW_PRIVS allows unprivileged processes to install seccomp
+	// filters without CAP_SYS_ADMIN. Setting it is always safe and required
+	// when the caller lacks that capability.
+	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0); errno != 0 {
+		return fmt.Errorf("prctl(PR_SET_NO_NEW_PRIVS): %w", errno)
 	}
 
 	prog := syscall.SockFprog{
