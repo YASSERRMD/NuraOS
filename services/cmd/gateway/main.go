@@ -13,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof" // registers pprof handlers on http.DefaultServeMux
 	"os"
 	"os/signal"
 	"syscall"
@@ -110,6 +111,24 @@ func main() {
 			)
 		}
 	}()
+
+	// Optional pprof profiling endpoint: NURA_PPROF=1 starts a loopback-only
+	// HTTP server on port 6060 exposing /debug/pprof/* (no auth).
+	if os.Getenv("NURA_PPROF") == "1" {
+		pprofAddr := "127.0.0.1:6060"
+		pprofSrv := &http.Server{
+			Addr:         pprofAddr,
+			Handler:      http.DefaultServeMux,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 60 * time.Second,
+		}
+		go func() {
+			slog.Info("pprof endpoint active", "addr", pprofAddr)
+			if err := pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("pprof server error", "err", err)
+			}
+		}()
+	}
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("gateway terminated", "err", err)
