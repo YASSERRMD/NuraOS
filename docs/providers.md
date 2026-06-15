@@ -109,17 +109,37 @@ substitution possible at compile time.
 A test in each provider crate checks that it is not re-exported from
 `nura-core`, enforcing this invariant automatically in CI.
 
+## Provider Registry
+
+`ProviderRegistry::from_config(cfg, secrets)` constructs all enabled providers
+from the loaded `Config` and `Secrets`. The local provider is always registered.
+Remote providers (`anthropic`, `openai`) are registered only when:
+
+1. The binary was built with `--features remote-providers`, AND
+2. The corresponding API key is present in secrets.
+
+The registry exposes:
+- `get(name)` -- look up a provider by name
+- `default_provider()` -- the provider named by `provider.active` in config,
+  falling back to the first registered provider
+- `list_entries()` -- iterate `ProviderEntry` (name, tier, capabilities) for display
+- `probe_local_reachability()` -- HTTP health check for local providers;
+  remote providers are marked `Skipped` (no network call, no key use)
+
+The agent exits at boot with code 2 if the registry is empty.
+
 ## Registered Providers
 
-| Name | Phase | Backend |
-|------|-------|---------|
-| `stub` | 15 (current) | Echo stub, tests only |
-| `local` | 17 | llama-server over 127.0.0.1 |
-| `anthropic` | 18 | Anthropic Messages API |
-| `openai` | 19 | OpenAI Chat Completions API |
+| Name | Phase | Tier | Backend |
+|------|-------|------|---------|
+| `stub` | 15 | local | Echo stub, tests only |
+| `local` | 17 | local | llama-server over 127.0.0.1 |
+| `anthropic` | 18 | cloud | Anthropic Messages API |
+| `openai` | 19 | cloud | OpenAI Chat Completions API |
 
-The active provider is selected by `routing_policy` in `agent.toml`
-(see [config.md](config.md)).
+The active provider is selected by `provider.active` in `agent.toml`
+(see [config.md](config.md)). When the named provider is not registered
+(e.g. key missing), the agent falls back to `local` with a warning.
 
 ## Configuration Examples
 
