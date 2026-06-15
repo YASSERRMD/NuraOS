@@ -28,6 +28,10 @@ type QEMUOpts struct {
 	CPUs int
 	// ExtraKernelArgs are appended verbatim to the kernel command line.
 	ExtraKernelArgs string
+	// NoNetwork omits the virtio-net device so the guest boots without any
+	// network interface. APIPort and MetricsPort are still allocated but
+	// port-forwarding is not configured. Used for offline-boot tests.
+	NoNetwork bool
 }
 
 // QEMUInstance represents a running NuraOS QEMU VM.
@@ -38,6 +42,8 @@ type QEMUInstance struct {
 	MetricsPort int
 	// SerialLogPath is the path to the file capturing serial console output.
 	SerialLogPath string
+	// RepoRoot is the NuraOS repository root used to boot this instance.
+	RepoRoot string
 
 	cmd        *exec.Cmd
 	cancel     context.CancelFunc
@@ -104,12 +110,16 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-display", "none",
 		"-serial", fmt.Sprintf("unix:%s,server,nowait", serialSock),
 		"-no-reboot",
-		"-netdev", fmt.Sprintf("user,id=net0,hostfwd=tcp::%d-:8080,hostfwd=tcp::%d-:9090",
-			apiPort, metricsPort),
-		"-device", "virtio-net-pci,netdev=net0",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
 		"-append", kernelArgs,
+	}
+	if !opts.NoNetwork {
+		args = append(args,
+			"-netdev", fmt.Sprintf("user,id=net0,hostfwd=tcp::%d-:8080,hostfwd=tcp::%d-:9090",
+				apiPort, metricsPort),
+			"-device", "virtio-net-pci,netdev=net0",
+		)
 	}
 	if opts.DataImage != "" {
 		args = append(args,
@@ -172,6 +182,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		APIPort:       apiPort,
 		MetricsPort:   metricsPort,
 		SerialLogPath: serialLog,
+		RepoRoot:      opts.RepoRoot,
 		cmd:           cmd,
 		cancel:        cancel,
 		tmpDir:        tmpDir,
