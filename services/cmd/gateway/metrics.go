@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/agent"
+	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 )
 
 // epIdx identifies a gateway endpoint for per-route request counters.
@@ -90,14 +91,16 @@ func (m *MetricsStore) uptimeSeconds() int64 {
 }
 
 // WriteTo writes Prometheus text exposition (version 0.0.4) to w.
-// agentMet may be nil when the agent is unreachable; those metric families
-// are omitted rather than emitted with stale zeros.
-// A nil receiver emits only a comment line so callers need not nil-check.
-func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics) {
+// agentMet may be nil when the agent is unreachable; those metric families are
+// omitted rather than emitted with stale zeros. disk may be nil when the
+// monitor has not yet polled or is unconfigured. A nil receiver emits only a
+// comment line so callers need not nil-check.
+func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics, disk *diskmon.Usage) {
 	if m == nil {
 		fmt.Fprintf(w, "# metrics unavailable\n")
 		return
 	}
+
 	uptime := int64(time.Since(m.startTime).Seconds())
 
 	fmt.Fprintf(w, "# HELP nura_gateway_uptime_seconds Seconds since the gateway process started.\n")
@@ -131,6 +134,24 @@ func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics) {
 	fmt.Fprintf(w, "# HELP process_resident_memory_bytes Memory obtained from the OS by the Go runtime in bytes.\n")
 	fmt.Fprintf(w, "# TYPE process_resident_memory_bytes gauge\n")
 	fmt.Fprintf(w, "process_resident_memory_bytes %d\n", ms.Sys)
+
+	if disk != nil {
+		fmt.Fprintf(w, "# HELP nura_disk_total_bytes Total size of the /data filesystem in bytes.\n")
+		fmt.Fprintf(w, "# TYPE nura_disk_total_bytes gauge\n")
+		fmt.Fprintf(w, "nura_disk_total_bytes %d\n", disk.Total)
+
+		fmt.Fprintf(w, "# HELP nura_disk_used_bytes Used bytes on the /data filesystem.\n")
+		fmt.Fprintf(w, "# TYPE nura_disk_used_bytes gauge\n")
+		fmt.Fprintf(w, "nura_disk_used_bytes %d\n", disk.Used)
+
+		fmt.Fprintf(w, "# HELP nura_disk_available_bytes Available bytes on the /data filesystem.\n")
+		fmt.Fprintf(w, "# TYPE nura_disk_available_bytes gauge\n")
+		fmt.Fprintf(w, "nura_disk_available_bytes %d\n", disk.Available)
+
+		fmt.Fprintf(w, "# HELP nura_disk_used_percent Percentage of /data filesystem in use (0-100).\n")
+		fmt.Fprintf(w, "# TYPE nura_disk_used_percent gauge\n")
+		fmt.Fprintf(w, "nura_disk_used_percent %.2f\n", disk.UsedPct)
+	}
 
 	if agentMet == nil {
 		return

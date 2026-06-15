@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/agent"
+	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 )
 
 // chatBufPool recycles 4 KiB read buffers across SSE proxy iterations.
@@ -31,6 +32,7 @@ type handlers struct {
 	ts          *tokenStore // nil when auth is disabled (tests)
 	machineID   string
 	hostname    string
+	diskMon     *diskmon.Monitor // nil when disk monitoring is disabled
 }
 
 func newHandlers(socketPath string, store *MetricsStore) *handlers {
@@ -75,6 +77,13 @@ func (h *handlers) version(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) chat(w http.ResponseWriter, r *http.Request) {
 	h.store.incRequest(epChat)
 	start := time.Now()
+
+	if h.diskMon != nil && h.diskMon.IsCritical() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "disk full: new sessions refused until space is reclaimed",
+		})
+		return
+	}
 
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		writeJSON(w, http.StatusUnsupportedMediaType,
@@ -202,9 +211,14 @@ func (h *handlers) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		agentMetPtr = &agentMet
 	}
 
+	var disk *diskmon.Usage
+	if h.diskMon != nil {
+		disk = h.diskMon.LastUsage()
+	}
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	h.store.WriteTo(w, agentMetPtr)
+	h.store.WriteTo(w, agentMetPtr, disk)
 }
 
 // configHandler serves GET /config and returns the effective gateway
@@ -459,12 +473,27 @@ func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var diskStatus *agent.DiskStatus
+	if h.diskMon != nil {
+		if u := h.diskMon.LastUsage(); u != nil {
+			diskStatus = &agent.DiskStatus{
+				Path:       h.diskMon.Path,
+				TotalBytes: u.Total,
+				UsedBytes:  u.Used,
+				FreeBytes:  u.Available,
+				UsedPct:    u.UsedPct,
+				Status:     h.diskMon.CurrentStatus().String(),
+			}
+		}
+	}
+
 	resp := agent.StatusResponse{
 		Overall:    overall,
 		Version:    version,
 		Uptime:     h.store.uptimeSeconds(),
 		MachineID:  h.machineID,
 		Hostname:   h.hostname,
+		Disk:       diskStatus,
 		Components: components,
 	}
 
