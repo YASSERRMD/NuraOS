@@ -10,22 +10,25 @@ import (
 const seccompExecBin = "/sbin/nura-manager"
 
 // wrapWithSeccomp prepends the seccomp-exec trampoline to args when the unit
-// has a seccomp profile configured. The trampoline applies the BPF filter and
-// then exec()s the remaining command; the filter is inherited by all subsequent
-// exec calls in the privilege-drop chain (su -> sh -> service).
+// has a seccomp or landlock profile configured. The trampoline applies the BPF
+// filter and/or Landlock ruleset, then exec()s the remaining command. Both are
+// inherited by all subsequent exec calls in the privilege-drop chain
+// (su -> sh -> service).
 func wrapWithSeccomp(args []string, u *unit.Unit) []string {
-	if u.Seccomp.Profile == "" {
+	if u.Seccomp.Profile == "" && u.Landlock.Profile == "" {
 		return args
 	}
 	mode := u.Seccomp.Mode
 	if mode == "" {
 		mode = "enforce"
 	}
-	return append(
-		[]string{seccompExecBin, "seccomp-exec",
-			"--profile", u.Seccomp.Profile,
-			"--mode", mode,
-			"--"},
-		args...,
-	)
+	prefix := []string{seccompExecBin, "seccomp-exec"}
+	if u.Seccomp.Profile != "" {
+		prefix = append(prefix, "--profile", u.Seccomp.Profile, "--mode", mode)
+	}
+	if u.Landlock.Profile != "" {
+		prefix = append(prefix, "--landlock-profile", u.Landlock.Profile)
+	}
+	prefix = append(prefix, "--")
+	return append(prefix, args...)
 }

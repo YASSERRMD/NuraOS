@@ -75,6 +75,13 @@ type Seccomp struct {
 	Mode string `toml:"mode"`
 }
 
+// Landlock configures per-service Landlock filesystem confinement.
+// When Profile is empty, no Landlock rules are applied.
+type Landlock struct {
+	// Profile is the path to a TOML path-rules file (e.g. /etc/nura/landlock/gateway.toml).
+	Profile string `toml:"profile"`
+}
+
 // Namespaces configures which Linux namespaces to clone for this unit.
 // Defaults are all false (no namespace isolation beyond the inherited set).
 type Namespaces struct {
@@ -127,6 +134,8 @@ type Unit struct {
 	Namespaces Namespaces `toml:"namespaces"`
 	// Seccomp configures per-service BPF syscall filtering.
 	Seccomp Seccomp `toml:"seccomp"`
+	// Landlock configures per-service Landlock filesystem confinement.
+	Landlock Landlock `toml:"landlock"`
 	// Enabled controls whether the unit participates in the start plan.
 	Enabled bool `toml:"enabled"`
 }

@@ -32,3 +32,6 @@ ipc = true
 [seccomp]
 profile = "/etc/nura/seccomp/nura-agent.toml"
 mode    = "enforce"
+
+[landlock]
+profile = "/etc/nura/landlock/nura-agent.toml"

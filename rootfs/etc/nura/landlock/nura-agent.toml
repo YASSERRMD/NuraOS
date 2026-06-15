@@ -1,0 +1,53 @@
+# Landlock filesystem confinement profile for nura-agent (uid=1000, nura).
+# All paths needed by the launch chain (nura-manager -> su -> sh -> nura-agent)
+# and the agent process itself must appear here.
+
+# BusyBox shell and utilities (su, sh)
+[[paths]]
+path = "/bin"
+access = ["execute", "read_file", "read_dir"]
+
+# Service binaries + nura-manager trampoline
+[[paths]]
+path = "/sbin"
+access = ["execute", "read_file", "read_dir"]
+
+# /etc for su to authenticate (passwd, shadow, group) and service config
+[[paths]]
+path = "/etc"
+access = ["read_file", "read_dir"]
+
+# /proc for runtime introspection
+[[paths]]
+path = "/proc"
+access = ["read_file", "read_dir"]
+
+# Agent configuration and secrets
+[[paths]]
+path = "/data/etc"
+access = ["read_file", "read_dir"]
+
+# Session provenance logs
+[[paths]]
+path = "/data/sessions"
+access = ["read_file", "write_file", "read_dir", "make_reg", "remove_file"]
+
+# Application logs
+[[paths]]
+path = "/data/logs"
+access = ["read_file", "write_file", "read_dir", "make_reg", "remove_file"]
+
+# Structured journal written by the agent
+[[paths]]
+path = "/data/journal"
+access = ["read_file", "write_file", "read_dir", "make_reg"]
+
+# UNIX socket for inbound requests from gateway
+[[paths]]
+path = "/run"
+access = ["read_file", "read_dir", "make_sock"]
+
+# Temporary scratch space
+[[paths]]
+path = "/tmp"
+access = ["read_file", "write_file", "read_dir", "make_reg", "remove_file"]

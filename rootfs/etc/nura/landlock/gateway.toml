@@ -1,0 +1,48 @@
+# Landlock filesystem confinement profile for gateway (uid=1001, nura-gw).
+# All paths needed by the launch chain (nura-manager -> su -> sh -> gateway)
+# and the gateway process itself must appear here.
+
+# BusyBox shell and utilities (su, sh)
+[[paths]]
+path = "/bin"
+access = ["execute", "read_file", "read_dir"]
+
+# Service binaries + nura-manager trampoline
+[[paths]]
+path = "/sbin"
+access = ["execute", "read_file", "read_dir"]
+
+# /etc for su to authenticate (passwd, shadow, group) and service config
+[[paths]]
+path = "/etc"
+access = ["read_file", "read_dir"]
+
+# /proc for runtime introspection
+[[paths]]
+path = "/proc"
+access = ["read_file", "read_dir"]
+
+# Gateway configuration and secrets (gateway_token, provider keys)
+[[paths]]
+path = "/data/etc"
+access = ["read_file", "read_dir"]
+
+# Request/response journal
+[[paths]]
+path = "/data/journal"
+access = ["read_file", "write_file", "read_dir", "make_reg"]
+
+# Access logs
+[[paths]]
+path = "/data/logs"
+access = ["read_file", "write_file", "read_dir", "make_reg"]
+
+# UNIX socket for outbound requests to nura-agent; TCP accept socket (from manager)
+[[paths]]
+path = "/run"
+access = ["read_file", "read_dir", "make_sock"]
+
+# Temporary scratch space
+[[paths]]
+path = "/tmp"
+access = ["read_file", "write_file", "read_dir", "make_reg", "remove_file"]

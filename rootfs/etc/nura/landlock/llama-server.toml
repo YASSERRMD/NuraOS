@@ -1,0 +1,43 @@
+# Landlock filesystem confinement profile for llama-server (uid=1002, llama).
+# All paths needed by the launch chain (nura-manager -> su -> sh -> llama-server)
+# and the inference server itself must appear here.
+
+# BusyBox shell and utilities (su, sh)
+[[paths]]
+path = "/bin"
+access = ["execute", "read_file", "read_dir"]
+
+# Service binaries + nura-manager trampoline
+[[paths]]
+path = "/sbin"
+access = ["execute", "read_file", "read_dir"]
+
+# /etc for su to authenticate (passwd, shadow, group) and service config
+[[paths]]
+path = "/etc"
+access = ["read_file", "read_dir"]
+
+# /proc for runtime introspection and CPU info (llama.cpp reads /proc/cpuinfo)
+[[paths]]
+path = "/proc"
+access = ["read_file", "read_dir"]
+
+# Model weight files (read-only; llama-server must NOT write here)
+[[paths]]
+path = "/data/models"
+access = ["read_file", "read_dir"]
+
+# Inference logs
+[[paths]]
+path = "/data/logs"
+access = ["read_file", "write_file", "read_dir", "make_reg", "remove_file"]
+
+# /run for health-check socket (if any) and pid lookup
+[[paths]]
+path = "/run"
+access = ["read_file", "read_dir"]
+
+# Large temporary buffers (llama.cpp may write temporary KV-cache files)
+[[paths]]
+path = "/tmp"
+access = ["read_file", "write_file", "read_dir", "make_reg", "remove_file", "make_dir", "remove_dir"]

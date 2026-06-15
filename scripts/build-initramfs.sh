@@ -144,6 +144,17 @@ if [ -d "${SECCOMP_SRC}" ]; then
     done
 fi
 
+# ----- Landlock profiles (Phase 72+) -----
+LANDLOCK_SRC="${REPO_ROOT}/rootfs/etc/nura/landlock"
+if [ -d "${LANDLOCK_SRC}" ]; then
+    mkdir -p "${STAGING}/etc/nura/landlock"
+    for f in "${LANDLOCK_SRC}"/*.toml; do
+        [ -f "${f}" ] || continue
+        install -m 644 "${f}" "${STAGING}/etc/nura/landlock/"
+        log "installed landlock profile: $(basename "${f}")"
+    done
+fi
+
 # ----- Gateway and llama-server (installed by later phases) -----
 for svc in llama-server gateway; do
     SVC_BIN="${REPO_ROOT}/rootfs/staging/sbin/${svc}"
