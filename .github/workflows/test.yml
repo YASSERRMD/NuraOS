@@ -87,7 +87,34 @@ jobs:
             libssl-dev libelf-dev \
             cpio gzip musl-tools \
             cmake ninja-build libclang-dev \
-            e2fsprogs
+            e2fsprogs xz-utils bzip2
+
+      # Cache downloaded source tarballs (kernel + musl + busybox) so a
+      # cache miss on the image only re-downloads when VERSIONS.env changes.
+      - name: Cache source downloads
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            kernel/_download/
+            third_party/_download/
+          key: nuraos-sources-v1-${{ hashFiles('scripts/VERSIONS.env') }}
+
+      - name: Fetch kernel source
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-kernel.sh
+
+      - name: Configure kernel
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/kernel-config.sh
+
+      - name: Fetch and build musl
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-musl.sh
+
+      - name: Fetch and build BusyBox
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-busybox.sh
 
       - name: Build NuraOS image
         if: steps.cache.outputs.cache-hit != 'true'
