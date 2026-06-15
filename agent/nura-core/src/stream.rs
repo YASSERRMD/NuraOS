@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -82,7 +81,7 @@ where
 
     let deadline = Instant::now() + timeout;
     let mut output = AggregatedOutput::default();
-    let mut partial_calls: HashMap<String, PartialToolCall> = HashMap::new();
+    let mut partial_calls: Vec<PartialToolCall> = Vec::new();
 
     loop {
         if cancel.is_cancelled() {
@@ -134,8 +133,8 @@ where
         }
     }
 
-    // Assemble any in-progress tool calls.
-    for (_, partial) in partial_calls {
+    // Assemble tool calls in arrival order (Vec preserves insertion order).
+    for partial in partial_calls {
         if !partial.id.is_empty() && !partial.name.is_empty() {
             output.tool_calls.push(AssembledToolCall {
                 id: partial.id,
@@ -167,12 +166,59 @@ where
     Ok(output)
 }
 
+/// Synchronous aggregation for use by the turn manager.
+///
+/// Drives `events` on the calling thread (no background thread, no timeout).
+/// The caller is responsible for deadline enforcement between iterations.
+/// `on_token` is called for each `TokenDelta`, enabling incremental output.
+pub fn aggregate_sync<F>(
+    events: impl Iterator<Item = Result<StreamEvent>>,
+    cancel: &CancelToken,
+    on_token: &mut F,
+) -> Result<AggregatedOutput>
+where
+    F: FnMut(&str),
+{
+    let mut output = AggregatedOutput::default();
+    let mut partial_calls: Vec<PartialToolCall> = Vec::new();
+
+    for ev_result in events {
+        if cancel.is_cancelled() {
+            output.cancelled = true;
+            output.stop_reason = StopReason::Cancel;
+            info!("stream_sync: cancelled");
+            break;
+        }
+        match ev_result {
+            Ok(event) => {
+                if let Some(true) = handle_event(event, &mut output, &mut partial_calls, on_token)?
+                {
+                    break;
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    for partial in partial_calls {
+        if !partial.id.is_empty() && !partial.name.is_empty() {
+            output.tool_calls.push(AssembledToolCall {
+                id: partial.id,
+                name: partial.name,
+                arguments_json: partial.arguments,
+            });
+        }
+    }
+
+    Ok(output)
+}
+
 /// Returns `Some(true)` to break the loop, `Some(false)` to continue,
 /// `None` for events that do not affect loop control.
 fn handle_event<F>(
     event: StreamEvent,
     output: &mut AggregatedOutput,
-    partial_calls: &mut HashMap<String, PartialToolCall>,
+    partial_calls: &mut Vec<PartialToolCall>,
     on_token: &mut F,
 ) -> Result<Option<bool>>
 where
@@ -189,11 +235,17 @@ where
             name,
             arguments_chunk,
         } => {
-            let entry = partial_calls.entry(id.clone()).or_insert_with(|| PartialToolCall {
-                id: id.clone(),
-                name: String::new(),
-                arguments: String::new(),
-            });
+            let entry = match partial_calls.iter_mut().find(|p| p.id == id) {
+                Some(p) => p,
+                None => {
+                    partial_calls.push(PartialToolCall {
+                        id: id.clone(),
+                        name: String::new(),
+                        arguments: String::new(),
+                    });
+                    partial_calls.last_mut().unwrap()
+                }
+            };
             if let Some(n) = name {
                 entry.name = n;
             }
