@@ -1,6 +1,9 @@
 # ---- temp / scratch ----
 temp/
 
+# ---- release packaging output ----
+dist/
+
 # ---- macOS ----
 .DS_Store
 .AppleDouble
