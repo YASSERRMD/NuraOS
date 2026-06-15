@@ -38,9 +38,11 @@ import (
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/delta"
+	"github.com/yasserrmd/nuraos/services/internal/diagbundle"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 	"github.com/yasserrmd/nuraos/services/internal/history"
+	"github.com/yasserrmd/nuraos/services/internal/paniccap"
 	"github.com/yasserrmd/nuraos/services/internal/pkgmgr"
 	"github.com/yasserrmd/nuraos/services/internal/selftest"
 	"github.com/yasserrmd/nuraos/services/internal/update"
@@ -125,6 +127,8 @@ func main() {
 		cmdEvents(outputJSON)
 	case "selftest":
 		cmdSelftest(rest, outputJSON)
+	case "diag":
+		cmdDiag(rest, outputJSON)
 	case "poweroff":
 		cmdShutdown(client, outputJSON, false)
 	case "reboot":
@@ -625,6 +629,49 @@ func cmdSelftest(args []string, asJSON bool) {
 	}
 }
 
+func cmdDiag(args []string, asJSON bool) {
+	crashDir := os.Getenv("NURA_DATA_DIR")
+	if crashDir == "" {
+		crashDir = "/data"
+	}
+	crashDir += "/crashes"
+
+	outDir := os.TempDir()
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "--out":
+			outDir = args[i+1]
+			i++
+		case "--crash-dir":
+			crashDir = args[i+1]
+			i++
+		}
+	}
+
+	// Archive any pending pstore/kernel panic records before bundling.
+	panics, _ := paniccap.CollectAndArchive("", crashDir)
+
+	path, err := diagbundle.Build(diagbundle.Options{
+		CrashDir: crashDir,
+		OutDir:   outDir,
+	})
+	if err != nil {
+		fatalf("diag: %v", err)
+	}
+
+	if asJSON {
+		printJSON(map[string]interface{}{
+			"archive":      path,
+			"panic_records": len(panics),
+		})
+		return
+	}
+	fmt.Printf("diagnostic archive: %s\n", path)
+	if len(panics) > 0 {
+		fmt.Printf("  kernel panic records archived: %d\n", len(panics))
+	}
+}
+
 func cmdReclaim(asJSON bool) {
 	dataDir := os.Getenv("NURA_DATA_DIR")
 	if dataDir == "" {
@@ -696,6 +743,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  pkg remove  <name>        Remove an installed package")
 	fmt.Fprintln(os.Stderr, "  selftest [--boot] [--category kernel|storage|network|agent]")
 	fmt.Fprintln(os.Stderr, "                            Run built-in health self-tests")
+	fmt.Fprintln(os.Stderr, "  diag [--out DIR] [--crash-dir DIR]")
+	fmt.Fprintln(os.Stderr, "                            Bundle redacted diagnostic archive")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json          JSON output")

@@ -202,6 +202,65 @@ to `$TMPDIR` when `/data` is not mounted (useful in CI environments).
 
 ---
 
+## Crash diagnostics
+
+When a service exits unexpectedly, the NuraOS manager (or the crash-cap
+library used by the manager) writes a bounded, redacted diagnostic capture
+to `/data/crashes/`. Each capture is a JSON file named
+`<service>-<timestamp>.json` containing the last log lines, exit code,
+and lightweight resource state (RSS, open FDs, cgroup slice).
+
+Secrets are scrubbed before any data touches disk. Recognised patterns:
+API keys, bearer tokens, passwords, private-key PEM blocks, and long hex
+strings. The placeholder `[REDACTED]` replaces every match.
+
+At most 20 captures are retained (configurable via `MaxBundles` in the
+`crashcap` package). Oldest files are rotated out automatically.
+
+### Kernel panic capture
+
+On first boot after a kernel panic, the kernel writes a crash record to
+`/sys/fs/pstore/` (requires `CONFIG_PSTORE` and either ramoops or EFI
+pstore). NuraOS reads, redacts, and archives these records to
+`/data/crashes/` during startup via the `paniccap` package.
+
+To check if pending panic records exist:
+
+```sh
+ls /sys/fs/pstore/dmesg-* 2>/dev/null && echo "panic records found"
+```
+
+To trigger archival manually (happens automatically on startup):
+
+```sh
+nuractl diag
+```
+
+### Bundling a diagnostic archive
+
+`nuractl diag` reads all files from `/data/crashes`, re-applies redaction,
+and writes a gzip-compressed tar archive suitable for offline analysis:
+
+```sh
+# Bundle to /tmp (default):
+nuractl diag
+
+# Bundle to a specific directory:
+nuractl diag --out /mnt/usb
+
+# JSON output (returns archive path):
+nuractl diag --json
+```
+
+The archive is named `nura-diag-<timestamp>.tar.gz`. It contains at most
+50 files from `/data/crashes`. Kernel panic records archived from pstore
+during this run are also included.
+
+Exit code is 0 on success. The command fails if `/data/crashes` does not
+exist.
+
+---
+
 ## Build
 
 ```sh
