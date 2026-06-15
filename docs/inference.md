@@ -112,6 +112,91 @@ serving its first turn.
 
 Q4_K_M is the recommended default for embedded and low-RAM scenarios.
 
+## Model management
+
+### List installed models
+
+```sh
+bash scripts/model-list.sh
+```
+
+Output shows all `.gguf` files in `/data/models` with their sizes.
+The active model (from `/data/model.json`) is marked with `*`.
+
+Override defaults:
+
+```sh
+bash scripts/model-list.sh --model-dir /custom/models --manifest /data/model.json
+```
+
+### Switch the active model
+
+After downloading a second model with `fetch-model.sh`, activate it:
+
+```sh
+bash scripts/model-activate.sh qwen2-0.5b-instruct-q4_k_m \
+    --quantization Q4_K_M \
+    --context-length 2048 \
+    --params-billions 0.5 \
+    --architecture qwen2
+```
+
+The script writes a new `/data/model.json` manifest. Restart nura-agent to
+load the new model (or send `SIGHUP` if hot-reload is configured).
+
+Preview without writing:
+
+```sh
+bash scripts/model-activate.sh qwen2-0.5b-instruct-q4_k_m --dry-run
+```
+
+### Gateway model endpoint
+
+```
+GET /models
+```
+
+Returns the active model manifest and a list of discovered `.gguf` files:
+
+```json
+{
+  "active": {
+    "name": "smollm2-1.7b-instruct-q4_k_m",
+    "path": "/data/models/smollm2-1.7b-instruct-q4_k_m.gguf",
+    "size_bytes": 1048576000,
+    "size_mb": 1000,
+    "quantization": "Q4_K_M",
+    "context_length": 2048,
+    "parameters_billions": 1.7,
+    "architecture": "smollm2"
+  },
+  "available": [
+    {
+      "name": "smollm2-1.7b-instruct-q4_k_m",
+      "path": "/data/models/smollm2-1.7b-instruct-q4_k_m.gguf",
+      "size_bytes": 1048576000,
+      "size_mb": 1000
+    },
+    {
+      "name": "qwen2-0.5b-instruct-q4_k_m",
+      "path": "/data/models/qwen2-0.5b-instruct-q4_k_m.gguf",
+      "size_bytes": 398000000,
+      "size_mb": 379
+    }
+  ]
+}
+```
+
+`active` is `null` when no manifest exists (fresh install before first
+`fetch-model.sh` run). `available` is an empty array when the models
+directory is missing or empty.
+
+Override the paths read by the gateway:
+
+```sh
+MODEL_MANIFEST=/custom/model.json MODEL_DIR=/custom/models ./gateway
+```
+
 ## Privacy and data residency
 
 All inference runs on-device. No prompts, completions, or model weights leave
