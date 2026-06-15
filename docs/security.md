@@ -858,3 +858,114 @@ computes a hash tree over all blocks of the rootfs ext4 image and verifies each
 block on read. A corrupted block causes an I/O error rather than silent data
 corruption. See `docs/updates.md` for the A/B rootfs slot layout that
 dm-verity would apply to.
+
+## OS-Level Tool Sandbox
+
+NuraOS runs state-changing tools inside a kernel-enforced sandbox so that even
+a buggy or malicious tool cannot exceed its declared scope. Enforcement is in
+the Linux kernel, not in application code, so it cannot be bypassed by the
+tool itself.
+
+### Grant model
+
+Each tool invocation is accompanied by a `Grant` that declares exactly what
+the tool is allowed to do:
+
+```go
+type Grant struct {
+    Name      string      // human-readable tool name
+    Paths     []PathGrant // filesystem access (Landlock)
+    Syscalls  []string    // allowed syscall names (seccomp allowlist)
+    MemLimit  uint64      // memory.max in bytes (cgroup)
+    CPUWeight int         // cpu.weight (cgroup)
+    Timeout   time.Duration
+}
+
+type PathGrant struct {
+    Path  string
+    Read  bool
+    Write bool
+    Exec  bool
+}
+```
+
+Access to paths not listed in `Paths` is denied by Landlock at the kernel
+level. Syscalls not listed in `Syscalls` return `EPERM` via a seccomp BPF
+filter. Memory and CPU are capped by cgroup v2 limits.
+
+### Kernel mechanisms
+
+| Mechanism | What it enforces | Kernel version |
+|-----------|-----------------|----------------|
+| Landlock  | Filesystem path access | Linux 5.13+ |
+| seccomp BPF | Syscall allowlist | Linux 3.17+ |
+| cgroup v2 | Memory and CPU limits | Linux 4.5+ |
+| Namespaces (mount, IPC) | Isolation from host | Linux 3.8+ |
+| `PR_SET_NO_NEW_PRIVS` | No setuid/capability gain | Linux 3.5+ |
+
+### Sandbox architecture (self-re-exec trampoline)
+
+The sandbox uses the running binary as its own trampoline to avoid needing a
+separate helper. The flow for each tool invocation:
+
+```
+  parent process (nura-manager / gateway)
+    |
+    |-- creates cgroup for tool (resource limits applied by kernel)
+    |-- forks subprocess: <self> --nura-sandbox -- <tool> <args>
+    |     NURA_SANDBOX_APPLY=1
+    |     NURA_SANDBOX_GRANT=<json>
+    |
+    trampoline (child process, same binary)
+      |-- parses Grant from NURA_SANDBOX_GRANT
+      |-- applies Landlock (filesystem confinement)
+      |-- applies seccomp BPF (syscall allowlist)
+      |-- drops all capabilities from bounding set
+      |-- exec's <tool>  <--- kernel enforces all restrictions from here
+    |
+    parent moves PID into tool cgroup
+    parent waits; enforces wall-clock timeout via context
+```
+
+The trampoline entry point is `toolsandbox.MaybeApplyAndExec()`. Any binary
+that uses the sandbox package must call it at the start of `main()`:
+
+```go
+func main() {
+    if toolsandbox.MaybeApplyAndExec() {
+        return // never reached; exec replaced the process
+    }
+    // ... normal startup ...
+}
+```
+
+### Out-of-scope access denial
+
+On a Linux 5.13+ kernel, the sandbox enforces:
+
+- **Landlock**: `open(2)` on an ungranrted path returns `EACCES` even for root.
+- **seccomp**: A syscall not in the allowlist returns `EPERM`; the tool
+  receives the error and cannot circumvent the filter.
+- **cgroup OOM kill**: A tool that exceeds `MemLimit` is killed by the kernel
+  with `SIGKILL`; `Result.Killed` is set to true.
+- **Timeout**: The parent sends `SIGKILL` via context cancellation when
+  `Timeout` elapses; `Result.Killed` is set to true.
+
+All sandbox decisions are logged at `INFO` or `WARN` level with the tool name,
+outcome, and elapsed time.
+
+### Integration
+
+```go
+r := toolsandbox.New(log, bus)
+res, err := r.Run(ctx, toolsandbox.Grant{
+    Name:     "fs.write",
+    Paths:    []toolsandbox.PathGrant{{Path: "/data/workspace", Read: true, Write: true}},
+    Syscalls: []string{"read", "write", "openat", "close", "exit_group", "fstat", "mmap"},
+    MemLimit: 64 * 1024 * 1024,
+    Timeout:  10 * time.Second,
+}, "/sbin/my-tool", "--arg1", "value1")
+```
+
+`Run` returns after the tool exits or the timeout fires. Non-zero exit codes
+are in `res.ExitCode`; stdout and stderr are in `res.Stdout`/`res.Stderr`.
