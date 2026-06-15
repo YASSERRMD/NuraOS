@@ -138,6 +138,13 @@ CONFIG_CGROUP_PIDS=y
 CONFIG_HW_RANDOM=y
 CONFIG_HW_RANDOM_VIRTIO=y
 
+# ACPI: power management and hardware events (Phase 76).
+# CONFIG_ACPI_BUTTON enables the power-button driver; pressing the QEMU power
+# button generates an ACPI event that the kernel translates to SIGPWR delivered
+# to PID 1 (nura-manager). This drives the ordered shutdown path.
+CONFIG_ACPI=y
+CONFIG_ACPI_BUTTON=y
+
 # Linux Security Module: Landlock for per-service filesystem confinement (Phase 72).
 # Landlock (ABI v1, kernel 5.13+) lets each service restrict its own filesystem
 # access to a declared allowlist without requiring privileged LSM configuration.

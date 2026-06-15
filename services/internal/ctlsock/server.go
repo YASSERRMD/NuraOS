@@ -29,6 +29,8 @@ type Handler interface {
 	EnableService(name string) error
 	// DisableService marks a service as disabled in its unit file.
 	DisableService(name string) error
+	// Shutdown initiates a system-wide shutdown or reboot after ordered service stop.
+	Shutdown(reboot bool) error
 }
 
 // Server listens on a Unix domain socket and dispatches requests to Handler.
@@ -165,6 +167,18 @@ func (s *Server) dispatch(req Request) Response {
 			return Response{OK: false, Error: err.Error()}
 		}
 		return Response{OK: true, Message: "disabled " + req.Service}
+
+	case CmdPoweroff:
+		if err := s.handler.Shutdown(false); err != nil {
+			return Response{OK: false, Error: err.Error()}
+		}
+		return Response{OK: true, Message: "poweroff initiated"}
+
+	case CmdReboot:
+		if err := s.handler.Shutdown(true); err != nil {
+			return Response{OK: false, Error: err.Error()}
+		}
+		return Response{OK: true, Message: "reboot initiated"}
 
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %s", req.Command)}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
@@ -22,9 +23,23 @@ import (
 // more than this many lines per second have the excess silently dropped.
 const defaultLogRatePerSec = 200
 
+// Shutdown mode values carried on shutdownCh.
+const (
+	shutdownNormal   = 0 // SIGTERM/SIGINT: ordered stop then exit
+	shutdownPoweroff = 1 // ordered stop then syscall.Reboot(POWER_OFF)
+	shutdownReboot   = 2 // ordered stop then syscall.Reboot(RESTART)
+)
+
+// shutdownTotalTimeout is the maximum wall-clock time allowed for all services
+// to stop before the power action is forced. Each service already has a 15s
+// per-service grace period; this caps the total across the full shutdown plan.
+const shutdownTotalTimeout = 30 * time.Second
+
 // Run loads units from dir, resolves their order, and starts them in sequence
 // using the lifecycle Manager. A control socket is exposed for nuractl.
-// It blocks until SIGTERM/SIGINT, then performs ordered shutdown.
+// It blocks until a shutdown trigger arrives (SIGTERM, SIGINT, SIGPWR, or a
+// nuractl poweroff/reboot command), then performs ordered shutdown and -- for
+// poweroff/reboot -- calls the appropriate kernel reboot syscall.
 func Run(dir string) error {
 	const dataDir = "/data"
 	const journalDir = dataDir + "/journal"
@@ -66,16 +81,30 @@ func Run(dir string) error {
 	log.Info("nura-manager starting", "units", len(plan.Order))
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	// shutdownCh carries exactly one shutdown mode. Buffered so senders never block.
+	shutdownCh := make(chan int, 1)
+	deliverShutdown := func(mode int) {
+		select {
+		case shutdownCh <- mode:
+		default: // already triggered; first one wins
+		}
+	}
+
+	// SIGTERM / SIGINT: ordered stop then exit normally.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-sigs
 		log.Info("received signal", "signal", sig)
-		cancel()
+		deliverShutdown(shutdownNormal)
 	}()
 
-	// System identity: machine-id and hostname (set before starting services).
+	// ACPI power-button event (SIGPWR on Linux): ordered stop then poweroff.
+	watchACPI(func() { deliverShutdown(shutdownPoweroff) }, log)
+
+	// System identity: stable machine-id and hostname (set before starting services).
 	machineID, idErr := identity.LoadOrCreate(dataDir)
 	if idErr != nil {
 		log.Warn("machine-id unavailable", "err", idErr)
@@ -138,7 +167,15 @@ func Run(dir string) error {
 	for i, u := range plan.Order {
 		names[i] = u.Name
 	}
-	ctlHandler := lifecycle.NewCtlHandler(mgr, names)
+	ctlHandler := lifecycle.NewCtlHandler(mgr, names, func(reboot bool) {
+		if reboot {
+			log.Info("reboot requested via nuractl")
+			deliverShutdown(shutdownReboot)
+		} else {
+			log.Info("poweroff requested via nuractl")
+			deliverShutdown(shutdownPoweroff)
+		}
+	})
 	ctlSrv := ctlsock.NewServer(ctlsock.SocketPath, ctlHandler, log)
 	go func() {
 		if err := ctlSrv.Serve(ctx); err != nil {
@@ -149,9 +186,44 @@ func Run(dir string) error {
 	mgr.StartPlan(ctx, plan.Order)
 	log.Info("all units started; waiting for shutdown signal")
 
-	<-ctx.Done()
+	// Block until a shutdown trigger arrives.
+	mode := <-shutdownCh
+	cancel() // stop all service contexts
+
 	log.Info("initiating ordered shutdown")
-	mgr.ShutdownPlan(plan.Order)
+	shutdownDone := make(chan struct{})
+	go func() {
+		mgr.ShutdownPlan(plan.Order)
+		close(shutdownDone)
+	}()
+
+	select {
+	case <-shutdownDone:
+		log.Info("ordered shutdown complete")
+	case <-time.After(shutdownTotalTimeout):
+		log.Warn("shutdown timeout exceeded; forcing power action",
+			"timeout", shutdownTotalTimeout)
+	}
+
+	// Flush journal before any power state transition. Close() is idempotent
+	// so the deferred close above is a safe no-op after this point.
+	if jw != nil {
+		_ = jw.Close()
+	}
+
+	switch mode {
+	case shutdownPoweroff:
+		log.Info("halting system")
+		if err := lifecycle.SysHalt(); err != nil {
+			log.Error("poweroff syscall failed", "err", err)
+		}
+	case shutdownReboot:
+		log.Info("rebooting system")
+		if err := lifecycle.SysReboot(); err != nil {
+			log.Error("reboot syscall failed", "err", err)
+		}
+	}
+
 	log.Info("nura-manager shutdown complete")
 	return nil
 }

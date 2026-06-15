@@ -13,14 +13,16 @@ const SocketPath = "/run/nura-manager.sock"
 
 // Command names.
 const (
-	CmdList    = "list"
-	CmdStatus  = "status"
-	CmdStart   = "start"
-	CmdStop    = "stop"
-	CmdRestart = "restart"
-	CmdLogs    = "logs"
-	CmdEnable  = "enable"
-	CmdDisable = "disable"
+	CmdList     = "list"
+	CmdStatus   = "status"
+	CmdStart    = "start"
+	CmdStop     = "stop"
+	CmdRestart  = "restart"
+	CmdLogs     = "logs"
+	CmdEnable   = "enable"
+	CmdDisable  = "disable"
+	CmdPoweroff = "poweroff"
+	CmdReboot   = "reboot"
 )
 
 // Request is the JSON structure sent by nuractl to the manager.
