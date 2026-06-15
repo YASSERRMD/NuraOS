@@ -80,6 +80,30 @@ before retrying.
 | `http` | HTTP GET to `url`; success = status < 500 |
 | `socket` | Unix domain socket at `socket` path; success = connect OK |
 
+### Socket activation
+
+```toml
+[socket_activation]
+enabled      = true
+network      = "tcp"      # "tcp" or "unix"
+address      = "127.0.0.1:8080"
+idle_timeout = 300        # seconds; 0 = no idle stop
+```
+
+When `enabled = true`:
+1. The manager pre-opens the socket and binds `address` before the service starts.
+2. The service is not started until the first client connection arrives.
+3. The pre-opened socket fd is passed to the service as `LISTEN_FDS=1` (fd 3).
+4. The service must detect `LISTEN_FDS=1` and call `net.FileListener(os.NewFile(3, ""))`.
+5. If `idle_timeout > 0`, the manager stops the service after that many seconds of no
+   connection activity. The next connection restarts it automatically.
+
+Provenance and metrics counters survive stop/start cycles because they live in
+the agent and provenance store, not in the gateway process.
+
+The gateway (`/sbin/gateway`) supports socket activation natively: it checks
+`LISTEN_FDS=1` at startup and uses the inherited fd if present.
+
 ---
 
 ## Dependency resolution

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasserrmd/nuraos/services/internal/sockact"
 	"github.com/yasserrmd/nuraos/services/internal/unit"
 )
 
@@ -72,6 +73,16 @@ func (m *Manager) StartPlan(ctx context.Context, plan []*unit.Unit) {
 		}
 		m.mu.Unlock()
 
+		if u.SocketActivation.Enabled {
+			m.log.Info("socket-activating unit", "name", u.Name,
+				"network", u.SocketActivation.Network,
+				"address", u.SocketActivation.Address)
+			go m.socketActivate(ctx, u)
+			// Socket-activated units are not in the readiness gate; dependants
+			// start immediately after the socket is bound.
+			continue
+		}
+
 		m.log.Info("starting unit", "name", u.Name)
 		run := m.launchUnit(ctx, u)
 		m.mu.Lock()
@@ -109,10 +120,178 @@ func (m *Manager) ShutdownPlan(plan []*unit.Unit) {
 	}
 }
 
+// socketActivate manages the lazy-start lifecycle for a socket-activated unit.
+// It pre-opens the socket, waits for the first connection, then starts the
+// unit and passes the socket fd as LISTEN_FDS=1. When idle_timeout is set it
+// also stops the unit after the configured inactivity period.
+func (m *Manager) socketActivate(ctx context.Context, u *unit.Unit) {
+	sa := u.SocketActivation
+	network := sa.Network
+	if network == "" {
+		network = "tcp"
+	}
+
+	holder, err := sockact.NewHolder(network, sa.Address)
+	if err != nil {
+		m.log.Error("socket activation bind failed", "name", u.Name, "err", err)
+		return
+	}
+	defer holder.Close()
+	m.log.Info("socket bound; waiting for first connection",
+		"name", u.Name, "address", holder.Address())
+
+	// Idle monitor runs for the lifetime of the socket activation.
+	if sa.IdleTimeout > 0 {
+		idleTimeout := time.Duration(sa.IdleTimeout) * time.Second
+		go sockact.IdleMonitor(ctx, holder, idleTimeout, m.log, func() {
+			m.mu.Lock()
+			run := m.procs[u.Name]
+			status := m.statuses[u.Name]
+			m.mu.Unlock()
+			if run == nil {
+				return
+			}
+			if status != nil {
+				_ = status.transition(StateStopping, "idle timeout")
+			}
+			m.log.Info("idle-stopping unit", "name", u.Name)
+			run.stop()
+			m.mu.Lock()
+			m.procs[u.Name] = nil
+			m.mu.Unlock()
+			if status != nil {
+				_ = status.transition(StateInactive, "idle-stopped")
+			}
+		})
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		stopCh := make(chan struct{})
+		ctxDone := ctx.Done()
+		go func() {
+			<-ctxDone
+			close(stopCh)
+		}()
+
+		m.log.Info("waiting for activation connection", "name", u.Name)
+		if err := holder.WaitFirstConnection(stopCh); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			m.log.Warn("activation wait error", "name", u.Name, "err", err)
+			return
+		}
+		holder.TouchActivity()
+		m.log.Info("first connection received; activating unit", "name", u.Name)
+
+		// Initialise status entry if absent.
+		m.mu.Lock()
+		if _, exists := m.statuses[u.Name]; !exists {
+			m.statuses[u.Name] = newServiceStatus(u.Name)
+		}
+		m.mu.Unlock()
+
+		// Spawn the unit, passing the pre-opened socket as LISTEN_FDS.
+		run := m.launchSocketUnit(ctx, u, holder)
+		m.mu.Lock()
+		m.procs[u.Name] = run
+		m.mu.Unlock()
+
+		// Wait until the unit stops (idle-stop or crash) before accepting
+		// the next activation cycle.
+		m.waitRunStopped(ctx, u.Name)
+		m.log.Info("socket-activated unit stopped; ready for next activation", "name", u.Name)
+	}
+}
+
+// launchSocketUnit starts a unit with the pre-opened socket fd passed via
+// LISTEN_FDS=1 / LISTEN_PID environment variables.
+func (m *Manager) launchSocketUnit(ctx context.Context, u *unit.Unit, holder *sockact.Holder) *serviceRun {
+	runCtx, cancel := context.WithCancel(ctx)
+	run := &serviceRun{u: u, ctx: runCtx, cancel: cancel}
+
+	go func() {
+		m.mu.Lock()
+		status := m.statuses[u.Name]
+		m.mu.Unlock()
+
+		_ = status.transition(StateStarting, "socket activation")
+
+		f, err := holder.File()
+		if err != nil {
+			m.log.Error("holder.File() failed", "name", u.Name, "err", err)
+			_ = status.transition(StateFailed, "holder.File: "+err.Error())
+			cancel()
+			return
+		}
+
+		var args []string
+		if u.User != "" && u.User != "root" {
+			args = []string{"su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
+		} else {
+			args = append([]string{u.Exec}, u.Args...)
+		}
+
+		cmd := exec.CommandContext(runCtx, args[0], args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.ExtraFiles = []*os.File{f.File}
+		cmd.Env = append(os.Environ(),
+			"LISTEN_FDS=1",
+			fmt.Sprintf("LISTEN_PID=%d", os.Getpid()),
+		)
+		f.Close()
+
+		if err := cmd.Start(); err != nil {
+			m.log.Error("socket-activated start failed", "name", u.Name, "err", err)
+			_ = status.transition(StateFailed, "start: "+err.Error())
+			cancel()
+			return
+		}
+
+		run.mu.Lock()
+		run.cmd = cmd
+		run.mu.Unlock()
+		status.mu.Lock()
+		status.pid = cmd.Process.Pid
+		status.mu.Unlock()
+
+		_ = status.transition(StateReady, "socket-activated")
+		_ = status.transition(StateRunning, "ready -> running")
+		m.log.Info("socket-activated unit running", "name", u.Name, "pid", cmd.Process.Pid)
+
+		_ = cmd.Wait()
+		m.log.Info("socket-activated unit exited", "name", u.Name)
+		_ = status.transition(StateInactive, "exited")
+		cancel()
+	}()
+	return run
+}
+
+// waitRunStopped blocks until the unit's run context is done (stopped/exited).
+func (m *Manager) waitRunStopped(ctx context.Context, name string) {
+	m.mu.Lock()
+	run := m.procs[name]
+	m.mu.Unlock()
+	if run == nil {
+		return
+	}
+	select {
+	case <-run.ctx.Done():
+	case <-ctx.Done():
+	}
+}
+
 // serviceRun holds the running context for a single service instance.
 type serviceRun struct {
 	u      *unit.Unit
 	cmd    *exec.Cmd
+	ctx    context.Context
 	cancel context.CancelFunc
 	mu     sync.Mutex
 }
@@ -141,7 +320,7 @@ func (r *serviceRun) stop() {
 // launchUnit starts u and its restart supervisor goroutine.
 func (m *Manager) launchUnit(ctx context.Context, u *unit.Unit) *serviceRun {
 	runCtx, cancel := context.WithCancel(ctx)
-	run := &serviceRun{u: u, cancel: cancel}
+	run := &serviceRun{u: u, ctx: runCtx, cancel: cancel}
 	go m.restartLoop(runCtx, u, run)
 	return run
 }
