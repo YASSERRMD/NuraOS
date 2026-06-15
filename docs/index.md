@@ -5,6 +5,14 @@ correspond to the phase packs (core phases 00-55, extended phases 56-105).
 
 ---
 
+## Releases
+
+| Document | Description |
+|----------|-------------|
+| [releases.md](releases.md) | Per-release artifacts, verified measurements, and security attestations |
+
+---
+
 ## Getting started
 
 | Document | Description |
@@ -50,14 +58,15 @@ correspond to the phase packs (core phases 00-55, extended phases 56-105).
 
 ---
 
-## Security
+## Security and compliance
 
 | Document | Description |
 |----------|-------------|
-| [security.md](security.md) | OS-level sandbox (Landlock, seccomp, caps) |
+| [security.md](security.md) | OS-level sandbox (Landlock, seccomp, caps), security audit |
 | [isolation.md](isolation.md) | Namespace isolation and cgroup resource limits |
 | [provenance.md](provenance.md) | Request provenance and audit trail |
 | [identity.md](identity.md) | Machine identity and hostname persistence |
+| [compliance.md](compliance.md) | Data residency policy, provider audit log, retention |
 
 ---
 
@@ -104,6 +113,16 @@ correspond to the phase packs (core phases 00-55, extended phases 56-105).
 | [devices.md](devices.md) | Hardware device support (virtio, serial, watchdog) |
 | [power.md](power.md) | Power management and ACPI |
 | [time.md](time.md) | Time synchronisation (NTP, RTC, virtio-clock) |
+
+---
+
+## Testing and performance
+
+| Document | Description |
+|----------|-------------|
+| [testing.md](testing.md) | Unit tests, integration matrix, QEMU CI, budget assertions |
+| [performance.md](performance.md) | 2.0 performance baseline, regression gates, tuning notes |
+| [perf.md](perf.md) | Profiling tools and microbenchmarks |
 
 ---
 
