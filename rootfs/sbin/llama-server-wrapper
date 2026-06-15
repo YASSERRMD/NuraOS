@@ -1,0 +1,16 @@
+#!/bin/sh
+# llama-server-wrapper -- launch llama-server with CPU-profile-aligned --threads.
+#
+# Reads the thread count written by nura-cpu-apply at boot from
+# /run/nura-cpu-threads and passes it as --threads to the real llama-server
+# binary. Falls back to nproc (or 4) if the file is absent.
+#
+# All additional arguments passed to this wrapper are forwarded verbatim, so
+# the unit file args (--host, --port, --log-disable, ...) work unchanged.
+
+THREADS=$(cat /run/nura-cpu-threads 2>/dev/null)
+if [ -z "${THREADS}" ] || ! [ "${THREADS}" -ge 1 ] 2>/dev/null; then
+    THREADS=$(nproc 2>/dev/null || echo 4)
+fi
+
+exec /sbin/llama-server --threads "${THREADS}" "$@"

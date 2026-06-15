@@ -108,6 +108,35 @@ fi
 # via devtmpfs at boot, but we add console/null as a failsafe.
 # (We cannot use mknod here without root; the cpio header carries device info)
 
+# ----- CPU profile config and scripts (Phase 77+) -----
+CPU_PROFILE_CONF="${REPO_ROOT}/rootfs/etc/nura/cpu-profile.conf"
+if [ -f "${CPU_PROFILE_CONF}" ]; then
+    mkdir -p "${STAGING}/etc/nura"
+    install -m 644 "${CPU_PROFILE_CONF}" "${STAGING}/etc/nura/cpu-profile.conf"
+    log "installed cpu-profile.conf"
+fi
+
+CPU_APPLY="${REPO_ROOT}/rootfs/sbin/nura-cpu-apply"
+if [ -f "${CPU_APPLY}" ]; then
+    mkdir -p "${STAGING}/sbin"
+    install -m 755 "${CPU_APPLY}" "${STAGING}/sbin/nura-cpu-apply"
+    log "installed nura-cpu-apply"
+fi
+
+LLAMA_WRAPPER="${REPO_ROOT}/rootfs/sbin/llama-server-wrapper"
+if [ -f "${LLAMA_WRAPPER}" ]; then
+    mkdir -p "${STAGING}/sbin"
+    install -m 755 "${LLAMA_WRAPPER}" "${STAGING}/sbin/llama-server-wrapper"
+    log "installed llama-server-wrapper"
+fi
+
+BENCH_CPU="${REPO_ROOT}/rootfs/usr/bin/nura-bench-cpu"
+if [ -f "${BENCH_CPU}" ]; then
+    mkdir -p "${STAGING}/usr/bin"
+    install -m 755 "${BENCH_CPU}" "${STAGING}/usr/bin/nura-bench-cpu"
+    log "installed nura-bench-cpu"
+fi
+
 # ----- Supervisor -----
 SUPERVISOR_SRC="${REPO_ROOT}/rootfs/sbin/supervisor"
 if [ -f "${SUPERVISOR_SRC}" ]; then

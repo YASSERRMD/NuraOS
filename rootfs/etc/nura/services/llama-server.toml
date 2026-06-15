@@ -1,6 +1,6 @@
 name        = "llama-server"
 description = "llama.cpp inference server"
-exec        = "/sbin/llama-server"
+exec        = "/sbin/llama-server-wrapper"
 args        = ["--host", "127.0.0.1", "--port", "8081", "--log-disable"]
 type        = "longrun"
 user        = "llama"
