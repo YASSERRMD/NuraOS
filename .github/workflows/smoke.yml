@@ -1,0 +1,186 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      timeout:
+        description: "QEMU boot timeout in seconds"
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+
+# Only one smoke run at a time; cancel older runs on the same branch.
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-kernel:
+    name: Build kernel (cached)
+    runs-on: ubuntu-latest
+    outputs:
+      cache-hit: ${{ steps.cache-kernel.outputs.cache-hit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore kernel cache
+        id: cache-kernel
+        uses: actions/cache@v4
+        with:
+          path: image/out/bzImage
+          key: kernel-${{ hashFiles('scripts/VERSIONS.env', 'scripts/kernel-*.sh', 'scripts/build-kernel.sh') }}
+
+      - name: Install kernel build dependencies
+        if: steps.cache-kernel.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential bc libelf-dev libssl-dev bison flex
+
+      - name: Fetch kernel source
+        if: steps.cache-kernel.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-kernel.sh
+
+      - name: Configure kernel
+        if: steps.cache-kernel.outputs.cache-hit != 'true'
+        run: ./scripts/kernel-config.sh
+
+      - name: Build kernel
+        if: steps.cache-kernel.outputs.cache-hit != 'true'
+        run: ./scripts/build-kernel.sh -j$(nproc)
+
+      - name: Upload bzImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: bzImage
+          path: image/out/bzImage
+          retention-days: 7
+
+  build-initramfs:
+    name: Build initramfs
+    runs-on: ubuntu-latest
+    needs: build-kernel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.87.0"
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent/target
+          key: ${{ runner.os }}-cargo-musl-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-musl-
+
+      - name: Install musl-tools
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build nura-agent (musl)
+        working-directory: agent
+        run: |
+          cargo build --release --locked \
+            --target x86_64-unknown-linux-musl \
+            --bin nura-agent
+          install -Dm755 \
+            target/x86_64-unknown-linux-musl/release/nura-agent \
+            ../rootfs/staging/bin/nura-agent
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.4"
+          cache-dependency-path: services/go.mod
+
+      - name: Build gateway (static)
+        working-directory: services
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-s -w -X main.version=$(cat ../scripts/VERSIONS.env | grep NURA_VERSION | cut -d= -f2 | tr -d '\"')" \
+            -o ../rootfs/staging/bin/gateway ./cmd/gateway
+
+      - name: Fetch BusyBox binary
+        run: ./scripts/fetch-busybox.sh
+
+      - name: Build initramfs
+        run: ./scripts/build-initramfs.sh
+
+      - name: Upload initramfs
+        uses: actions/upload-artifact@v4
+        with:
+          name: initramfs
+          path: image/out/initramfs.cpio.gz
+          retention-days: 7
+
+  qemu-smoke:
+    name: QEMU boot smoke test
+    runs-on: ubuntu-latest
+    needs: [build-kernel, build-initramfs]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Download bzImage
+        uses: actions/download-artifact@v4
+        with:
+          name: bzImage
+          path: image/out
+
+      - name: Download initramfs
+        uses: actions/download-artifact@v4
+        with:
+          name: initramfs
+          path: image/out
+
+      - name: Boot smoke test
+        run: |
+          TIMEOUT="${{ github.event.inputs.timeout || '60' }}"
+          LOG=image/out/smoke.log
+          mkdir -p image/out
+
+          ./scripts/run-qemu.sh \
+            --no-data \
+            --timeout "${TIMEOUT}" \
+            --mem 256 \
+            --cpus 1 \
+            --log "${LOG}" \
+            2>&1 | tee /dev/stderr || true
+
+          echo "--- Boot log ---"
+          cat "${LOG}" || true
+
+          # Verify that the kernel reached the serial console stage.
+          if ! grep -q "printk: console \[ttyS0\] enabled" "${LOG}"; then
+            echo "FAIL: kernel did not reach serial console stage"
+            exit 1
+          fi
+          echo "OK: kernel serial console active"
+
+          # Verify /init ran.
+          if grep -q "\[init\]" "${LOG}"; then
+            echo "OK: /init started"
+          else
+            echo "INFO: /init marker not found (initramfs may be minimal)"
+          fi
+
+          # Verify supervisor started (or nura-agent shell if supervisor absent).
+          if grep -qE "(supervisor starting|stage1|BusyBox)" "${LOG}"; then
+            echo "OK: userland reached"
+          else
+            echo "WARN: userland stage not confirmed in boot log"
+          fi
+
+          echo "Smoke test passed."
