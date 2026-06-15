@@ -38,6 +38,7 @@ import (
 
 	"github.com/yasserrmd/nuraos/services/internal/backup"
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/secaudit"
 	"github.com/yasserrmd/nuraos/services/internal/delta"
 	"github.com/yasserrmd/nuraos/services/internal/diagbundle"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
@@ -128,6 +129,8 @@ func main() {
 		cmdEvents(outputJSON)
 	case "selftest":
 		cmdSelftest(rest, outputJSON)
+	case "secaudit":
+		cmdSecaudit(rest, outputJSON)
 	case "diag":
 		cmdDiag(rest, outputJSON)
 	case "backup":
@@ -591,6 +594,36 @@ func cmdPkg(args []string, asJSON bool) {
 	}
 }
 
+func cmdSecaudit(args []string, asJSON bool) {
+	criticalOnly := false
+	for _, a := range args {
+		if a == "--critical" {
+			criticalOnly = true
+		}
+	}
+
+	aud := secaudit.New()
+	if criticalOnly {
+		aud = aud.FilterBySeverity(secaudit.SeverityCritical)
+	}
+
+	ctx := context.Background()
+	rep := aud.Run(ctx)
+
+	if asJSON {
+		printJSON(rep)
+		if rep.Critical > 0 {
+			os.Exit(2)
+		}
+		return
+	}
+
+	fmt.Print(secaudit.FormatHuman(rep))
+	if rep.Critical > 0 {
+		os.Exit(2)
+	}
+}
+
 func cmdSelftest(args []string, asJSON bool) {
 	boot := false
 	category := ""
@@ -880,6 +913,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  pkg remove  <name>        Remove an installed package")
 	fmt.Fprintln(os.Stderr, "  selftest [--boot] [--category kernel|storage|network|agent]")
 	fmt.Fprintln(os.Stderr, "                            Run built-in health self-tests")
+	fmt.Fprintln(os.Stderr, "  secaudit [--critical]     Run security posture audit (exit 2 on critical failure)")
 	fmt.Fprintln(os.Stderr, "  diag [--out DIR] [--crash-dir DIR]")
 	fmt.Fprintln(os.Stderr, "                            Bundle redacted diagnostic archive")
 	fmt.Fprintln(os.Stderr, "  backup [--out FILE] [--include-models] [--passphrase P]")
