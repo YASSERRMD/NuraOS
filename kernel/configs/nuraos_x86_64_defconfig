@@ -132,6 +132,14 @@ CONFIG_MEMCG_SWAP=n
 CONFIG_BLKCG=y
 CONFIG_CGROUP_PIDS=y
 
+# Linux Security Module: Landlock for per-service filesystem confinement (Phase 72).
+# Landlock (ABI v1, kernel 5.13+) lets each service restrict its own filesystem
+# access to a declared allowlist without requiring privileged LSM configuration.
+# No AppArmor or SELinux policy authoring is needed; policies live in TOML files.
+CONFIG_SECURITY=y
+CONFIG_SECURITY_LANDLOCK=y
+CONFIG_LSM="landlock"
+
 # Panic on data corruption detected by the kernel.
 CONFIG_BUG_ON_DATA_CORRUPTION=y
 

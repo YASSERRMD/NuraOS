@@ -460,3 +460,114 @@ process with `SECCOMP_RET_KILL_PROCESS` if the architecture is not
 | ~340 available syscalls (x86-64) | 70-100 per service |
 | Any exploit could pivot via arbitrary syscalls | Blocked syscalls return EPERM; no kernel code path reached |
 | Kernel 0-day (e.g. nft, io_uring) exploitable | Kernel subsystem not reachable if its syscall is not in the allowlist |
+
+---
+
+## Filesystem confinement (Landlock LSM)
+
+Each service is confined to a declared set of filesystem paths and access rights
+using **Linux Landlock** (kernel 5.13+, ABI v1). A compromised service cannot
+read model weights, session history, or secrets belonging to another service even
+if it calls `open(2)` -- the kernel silently denies access with `EACCES`.
+
+### Why Landlock instead of AppArmor or SELinux
+
+| Property | Landlock | AppArmor | SELinux |
+|----------|----------|----------|---------|
+| Policy source | TOML file in rootfs | Text profile loaded by kernel module | Binary policy (complex toolchain) |
+| Kernel module required | No (built-in from 5.13+) | Yes (`apparmor_parser`) | Yes (`semanage`, `restorecon`) |
+| Policy labelling | Path-based (no xattrs) | Path-based | Label-based (xattr on every file) |
+| Unprivileged self-confinement | Yes -- process restricts itself | No -- requires root to load profiles | No |
+| Fit for single-binary appliance | Excellent | Good | Poor (policy toolchain too heavy) |
+
+Landlock requires no external tooling and no kernel module. Each service calls
+`landlock_restrict_self(2)` (syscall 446) to install its own ruleset. The
+restriction is inherited across fork and exec, so it applies to the entire
+privilege-drop chain (`su -> sh -> service`).
+
+### Profile format
+
+Profiles live in `/etc/nura/landlock/<service>.toml`:
+
+```toml
+[[paths]]
+path = "/data/sessions"
+access = ["read_file", "write_file", "read_dir", "make_reg", "remove_file"]
+
+[[paths]]
+path = "/etc"
+access = ["read_file", "read_dir"]
+```
+
+Available access rights (Landlock ABI v1):
+
+| Name | Landlock right | Meaning |
+|------|---------------|---------|
+| `execute` | `LANDLOCK_ACCESS_FS_EXECUTE` | Execute a file |
+| `write_file` | `LANDLOCK_ACCESS_FS_WRITE_FILE` | Write to an existing file |
+| `read_file` | `LANDLOCK_ACCESS_FS_READ_FILE` | Read file contents |
+| `read_dir` | `LANDLOCK_ACCESS_FS_READ_DIR` | List directory entries |
+| `remove_dir` | `LANDLOCK_ACCESS_FS_REMOVE_DIR` | Unlink a directory |
+| `remove_file` | `LANDLOCK_ACCESS_FS_REMOVE_FILE` | Unlink a file |
+| `make_char` | `LANDLOCK_ACCESS_FS_MAKE_CHAR` | Create character device |
+| `make_dir` | `LANDLOCK_ACCESS_FS_MAKE_DIR` | Create directory |
+| `make_reg` | `LANDLOCK_ACCESS_FS_MAKE_REG` | Create regular file |
+| `make_sock` | `LANDLOCK_ACCESS_FS_MAKE_SOCK` | Create UNIX domain socket |
+| `make_fifo` | `LANDLOCK_ACCESS_FS_MAKE_FIFO` | Create named pipe |
+| `make_block` | `LANDLOCK_ACCESS_FS_MAKE_BLOCK` | Create block device |
+| `make_sym` | `LANDLOCK_ACCESS_FS_MAKE_SYM` | Create symbolic link |
+
+### Per-service profile locations
+
+| Service | Profile | Notable restrictions |
+|---------|---------|---------------------|
+| nura-agent | `/etc/nura/landlock/nura-agent.toml` | No access to `/data/models` or other service sockets |
+| gateway | `/etc/nura/landlock/gateway.toml` | No access to `/data/sessions` or `/data/models` |
+| llama-server | `/etc/nura/landlock/llama-server.toml` | Read-only `/data/models`; no `/data/sessions` or `/data/etc` |
+
+All profiles include `/bin`, `/sbin`, and `/etc` (read-only) to accommodate the
+`su -> sh` privilege-drop chain that runs before the service binary.
+
+### Unit configuration
+
+```toml
+[landlock]
+profile = "/etc/nura/landlock/nura-agent.toml"
+```
+
+### Kernel configuration
+
+```
+CONFIG_SECURITY=y
+CONFIG_SECURITY_LANDLOCK=y
+CONFIG_LSM="landlock"
+```
+
+`CONFIG_LSM="landlock"` makes Landlock the only active LSM. AppArmor and SELinux
+are absent from the image, so this is the correct setting for the appliance.
+
+### ABI version probing
+
+At startup, `nura-manager seccomp-exec` probes the Landlock ABI version by calling
+`landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`. If the kernel
+returns ABI < 1 (kernel older than 5.13), the restriction is skipped with a warning
+log entry; the service starts unconfined. Production kernels built from
+`kernel/configs/nuraos_x86_64_defconfig` always have ABI >= 1.
+
+### Extending a profile
+
+1. Start the service with `mode = "log"` in `[seccomp]` and observe denied paths
+   via `dmesg | grep landlock` (kernel logs denied accesses at pr_debug level on
+   some configs) or by testing the service under load.
+2. Add the missing path with the required access rights to the profile TOML.
+3. Restart the service to pick up the updated profile.
+
+### Cross-service confinement boundary
+
+| Service A wants to access... | Allowed? |
+|------------------------------|----------|
+| nura-agent reading `/data/models` | No -- not in nura-agent profile |
+| gateway reading `/data/sessions` | No -- not in gateway profile |
+| llama-server writing `/data/etc` | No -- not in llama-server profile |
+| llama-server reading `/data/models` | Yes -- explicitly declared |
+| nura-agent creating `/run/nura-agent.sock` | Yes -- `make_sock` on `/run` |

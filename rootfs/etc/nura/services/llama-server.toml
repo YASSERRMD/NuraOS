@@ -32,3 +32,6 @@ uts     = true
 [seccomp]
 profile = "/etc/nura/seccomp/llama-server.toml"
 mode    = "enforce"
+
+[landlock]
+profile = "/etc/nura/landlock/llama-server.toml"

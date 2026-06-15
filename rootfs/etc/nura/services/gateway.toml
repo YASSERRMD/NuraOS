@@ -37,3 +37,6 @@ ipc = true
 [seccomp]
 profile = "/etc/nura/seccomp/gateway.toml"
 mode    = "enforce"
+
+[landlock]
+profile = "/etc/nura/landlock/gateway.toml"
