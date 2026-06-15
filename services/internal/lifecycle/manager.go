@@ -272,7 +272,7 @@ func (m *Manager) launchSocketUnit(ctx context.Context, u *unit.Unit, holder *so
 
 		var args []string
 		if u.User != "" && u.User != "root" {
-			args = []string{"su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
+			args = []string{"/bin/su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
 		} else {
 			args = append([]string{u.Exec}, u.Args...)
 		}
@@ -534,7 +534,7 @@ func (m *Manager) restartLoop(ctx context.Context, u *unit.Unit, run *serviceRun
 func (m *Manager) spawnProcess(ctx context.Context, u *unit.Unit) (*exec.Cmd, <-chan struct{}, error) {
 	var args []string
 	if u.User != "" && u.User != "root" {
-		args = []string{"su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
+		args = []string{"/bin/su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
 	} else {
 		args = append([]string{u.Exec}, u.Args...)
 	}
