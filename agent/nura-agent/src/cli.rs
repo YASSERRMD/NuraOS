@@ -1,6 +1,10 @@
 use std::process;
 
+use nura_core::config::Config;
+use nura_core::logging::{init as init_logging, LoggingConfig};
+use nura_core::telemetry::TurnId;
 use nura_core::version;
+use tracing::{error, info};
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -17,6 +21,13 @@ pub fn run() {
             process::exit(1);
         }
     }
+}
+
+fn init_tracing() {
+    let cfg = Config::load().unwrap_or_default();
+    init_logging(&LoggingConfig {
+        level: cfg.log_level,
+    });
 }
 
 fn cmd_version() {
@@ -37,15 +48,22 @@ fn cmd_help() {
 }
 
 fn cmd_run() {
-    println!("[nura-agent] starting ({})", version::version_string());
-    println!("[nura-agent] idle -- inference and REPL arrive in later phases");
+    init_tracing();
 
-    // Block until interrupted.
+    let turn_id = TurnId::new();
+    info!(turn_id = %turn_id, "nura-agent starting ({})", version::version_string());
+    info!(turn_id = %turn_id, "idle -- inference and REPL arrive in later phases");
+
     loop {
         std::thread::sleep(std::time::Duration::from_secs(60));
     }
 }
 
 fn cmd_doctor() {
-    crate::doctor::run();
+    init_tracing();
+    let result = crate::doctor::run();
+    if let Err(e) = result {
+        error!("doctor failed: {}", e);
+        process::exit(1);
+    }
 }
