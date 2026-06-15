@@ -82,6 +82,43 @@ ci/             CI workflow sources
 See [docs/host-setup.md](docs/host-setup.md) for the full host prerequisite list
 and [docs/architecture.md](docs/architecture.md) for the system design.
 
+## Gateway API (v0.1)
+
+Once the image is booted and the port is forwarded to the host:
+
+```sh
+# Health check (no auth needed)
+curl http://localhost:18080/healthz
+
+# View effective configuration
+curl http://localhost:18080/config
+
+# Chat (streaming SSE)
+curl -X POST http://localhost:18080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Hello"}]}'
+
+# List available tools
+curl http://localhost:18080/tools
+
+# Prometheus metrics
+curl http://localhost:18080/metrics
+```
+
+Add `-H "Authorization: Bearer YOUR_TOKEN"` to authenticated endpoints when a
+`gateway_token` is configured in `/data/etc/secrets.toml`.
+
+## Provider configuration
+
+Run the interactive setup helper to choose a provider and write secrets:
+
+```sh
+./scripts/configure.sh
+```
+
+Supported providers: `local` (llama.cpp on-device), `anthropic`, `openai`.
+Provider can be overridden per turn with `"provider": "anthropic"` in the chat body.
+
 ## Repository conventions
 
 - One branch per phase: `phase-NN-short-slug`. No direct pushes to `main`.

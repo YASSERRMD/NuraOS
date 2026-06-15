@@ -9,7 +9,7 @@ later stages wait for earlier ones to be healthy before proceeding.
 ```
 stage1-llama-server   llama-server (port 8081, loopback only)
 stage2-nura-agent     nura-agent (Unix socket /run/nura-agent.sock)
-stage3-gateway        nura-gateway (TCP port 8080, all interfaces)
+stage3-gateway        nura-gateway (TCP port 8080, loopback by default)
 ```
 
 ## Services
@@ -17,7 +17,7 @@ stage3-gateway        nura-gateway (TCP port 8080, all interfaces)
 ### llama-server
 
 | Item | Value |
-|------|-------|
+|---|---|
 | Binary | `/sbin/llama-server` |
 | Listen | `127.0.0.1:8081` (HTTP) |
 | Health | `GET http://127.0.0.1:8081/health` |
@@ -30,8 +30,9 @@ the stage is skipped gracefully.
 ### nura-agent
 
 | Item | Value |
-|------|-------|
+|---|---|
 | Binary | `/sbin/nura-agent` |
+| User | `nura` (uid=1000) |
 | IPC | Unix domain socket `/run/nura-agent.sock` |
 | Protocol | JSON-over-HTTP (plain HTTP/1.1 on the socket) |
 
@@ -39,58 +40,95 @@ The Rust agent implements the AI turn loop. It binds the Unix socket before
 accepting requests. The supervisor polls `/proc/net/unix` for the socket path
 (30 s timeout) before allowing the gateway to start.
 
-Endpoints exposed on the socket (Phase 28 stubs; fully implemented in Phase 29+):
+Agent endpoints on the socket:
 
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | /health | Returns `{"status":"ok","provider":"...","uptime_seconds":N}` |
-| POST | /turns | Stream a conversation turn (SSE) |
+|---|---|---|
+| GET | /health | `{"status":"ok","provider":"...","uptime_seconds":N}` |
+| POST | /turns | Stream a conversation turn (SSE); body is TurnRequest |
 | GET | /tools | List registered tools |
+| GET | /metrics | Agent operational counters (JSON) |
 
 ### nura-gateway
 
 | Item | Value |
-|------|-------|
+|---|---|
 | Binary | `/sbin/gateway` |
-| Listen | `0.0.0.0:8080` (TCP) |
-| Env | `GATEWAY_PORT` overrides 8080 |
-| Build | `scripts/build-gateway.sh` (static musl, CGO_ENABLED=0) |
+| User | `nura` (uid=1000) |
+| Listen | `127.0.0.1:8080` default; `0.0.0.0:8080` with `GATEWAY_BIND_LAN=1` |
+| Auth | Bearer token (optional; set `gateway_token` in secrets.toml) |
+| Build | `scripts/build-gateway.sh` (static, `CGO_ENABLED=0`) |
 
 The Go HTTP gateway translates external HTTP requests into IPC calls on the
-agent socket. Phase 28 ships `/healthz` and `/version`; Phase 29 adds `/chat`
-(SSE streaming) and `/tools`.
+agent socket. All endpoints (except `/healthz`) are protected by bearer auth
+when a token is configured.
 
-Endpoints (Phase 28):
+**Gateway HTTP endpoints:**
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /healthz | `{"status":"ok","agent_reachable":true}` or 503 degraded |
-| GET | /version | `{"service":"nura-gateway","version":"0.1.0"}` |
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | /healthz | Exempt | Agent reachability and status; 200 ok or 503 degraded |
+| GET | /version | Required | `{"service":"nura-gateway","version":"..."}` |
+| POST | /chat | Required | Chat turn (SSE); body `{"messages":[...],"provider":"..."}` |
+| GET | /tools | Required | List tools from the agent |
+| GET | /metrics | Required | Prometheus text with gateway and agent counters |
+| GET | /status | Required | Human-readable JSON health summary across all components |
+| GET | /config | Required | Effective gateway configuration (no secrets) |
+
+**Middleware stack (outer to inner):**
+
+```
+securityHeadersMiddleware  -- X-Content-Type-Options, X-Frame-Options, CSP
+bearerAuthMiddleware       -- 401 if token mismatch; /healthz exempt
+rateLimitMiddleware        -- 429 per-IP at 1 RPS (burst 10); /healthz exempt
+concurrencyMiddleware      -- 429 when 4+ concurrent non-health requests
+mux                        -- route to handler
+```
+
+**POST /chat body:**
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ],
+  "max_tokens": 1024,
+  "temperature": 0.7,
+  "provider": "local"
+}
+```
+
+`provider` overrides the configured default for this turn only.
+Valid values: `local`, `anthropic`, `openai`.
 
 ## QEMU port forwarding
 
-The recommended QEMU invocation forwards guest port 8080 to the host. Add
-`-netdev user,id=net0,hostfwd=tcp::18080-:8080` and `-device virtio-net-pci,netdev=net0`
-to the QEMU command so the gateway is reachable on the host at `http://localhost:18080`.
+```sh
+qemu-system-x86_64 \
+  -netdev user,id=n,hostfwd=tcp::18080-:8080 \
+  -device virtio-net-pci,netdev=n \
+  ...
+```
 
-Example:
+Gateway is then reachable on the host at `http://localhost:18080`.
 
 ```sh
 curl http://localhost:18080/healthz
-curl http://localhost:18080/version
+curl http://localhost:18080/config
 ```
 
 ## IPC contract
 
-The Go `services/internal/agent` package defines the shared types used by the
-gateway when calling the agent socket. Phase 28 defines the structs; Phase 29
-implements the HTTP client.
+The Go `services/internal/agent` package defines the shared types:
 
-```
-services/
-  cmd/gateway/          -- gateway binary (main package)
-  internal/agent/       -- IPC contract types (SocketPath, TurnRequest, ...)
-```
+| Type | Description |
+|---|---|
+| `HealthResponse` | GET /health response |
+| `TurnRequest` | POST /turns request body |
+| `TurnEvent` | One SSE frame from POST /turns |
+| `ToolsResponse` / `ToolInfo` | GET /tools response |
+| `AgentMetrics` | GET /metrics response |
+| `StatusResponse` / `StatusComponent` | GET /status response |
 
 ## Supervisor restart policy
 
@@ -98,3 +136,6 @@ All three services run under the supervisor's `start_service` loop:
 - Crash restarts: up to 5 times with exponential backoff (1 s, 2 s, 4 s, 8 s, 16 s).
 - After 5 crashes: 30 s cool-off, then counter resets.
 - SIGTERM to supervisor: all services receive SIGTERM; supervisor waits 5 s then halts.
+
+Services run as user `nura` (uid=1000) when `su` is available and the user
+exists in `/etc/passwd`. Falls back to root with a warning if not.
