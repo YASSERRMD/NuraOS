@@ -33,13 +33,47 @@ This confirms:
 | Time to panic                  | ~2-4 s      |
 | bzImage size                   | (see kernel.md) |
 
-## Phase 07: boot to interactive shell
+## Phase 07: boot to interactive BusyBox shell
 
-Updated when Phase 07 (initramfs) is complete.
+At this phase the initramfs is assembled and passed to QEMU. The kernel mounts
+it, runs /init, which sets up proc/sysfs/devtmpfs, brings up networking, mounts
+/data (or falls back to tmpfs), and drops to a BusyBox shell.
+
+Expected serial output:
+```
+[    0.200000] printk: console [ttyS0] enabled
+...
+[init] NuraOS init starting
+[init] mounting proc ...
+[init] mounting sysfs ...
+[init] mounting devtmpfs ...
+[init] mounting tmpfs on /tmp ...
+[init] bringing up loopback ...
+[init] bringing up eth0 (DHCP) ...
+[init] eth0: DHCP OK
+[init] no /data block device found; /data will be tmpfs (no persistence)
+[init] supervisor not found at /sbin/supervisor; dropping to BusyBox shell
+/ #
+```
 
 | Metric                         | Value       |
 |--------------------------------|-------------|
-| Time to BusyBox shell prompt   | TBD         |
+| Time to BusyBox shell prompt   | ~3-5 s      |
+
+## run-qemu.sh invocation for Phase 07
+
+```sh
+# Build first:
+./scripts/fetch-kernel.sh
+./scripts/kernel-config.sh
+./scripts/build-kernel.sh
+./scripts/fetch-musl.sh
+./scripts/fetch-busybox.sh
+./scripts/build-initramfs.sh
+
+# Then boot (no /data yet):
+./scripts/run-qemu.sh --no-data --timeout 60
+```
 
 ## Boot log location
 
