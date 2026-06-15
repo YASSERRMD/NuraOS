@@ -25,3 +25,6 @@ memory_max = "256M"
 type    = "socket"
 socket  = "/run/nura-agent.sock"
 timeout = 30
+
+[namespaces]
+ipc = true

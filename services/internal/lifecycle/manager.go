@@ -245,7 +245,9 @@ func (m *Manager) launchSocketUnit(ctx context.Context, u *unit.Unit, holder *so
 		}
 
 		cmd := exec.CommandContext(runCtx, args[0], args[1:]...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		saAttr := &syscall.SysProcAttr{Setpgid: true}
+		applyNamespaces(saAttr, u.Namespaces)
+		cmd.SysProcAttr = saAttr
 
 		var saStdout, saStderr io.ReadCloser
 		if m.journal != nil {
@@ -486,7 +488,9 @@ func (m *Manager) spawnProcess(ctx context.Context, u *unit.Unit) (*exec.Cmd, <-
 	}
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procAttr := &syscall.SysProcAttr{Setpgid: true}
+	applyNamespaces(procAttr, u.Namespaces)
+	cmd.SysProcAttr = procAttr
 
 	var stdoutPipe, stderrPipe io.ReadCloser
 	if m.journal != nil {

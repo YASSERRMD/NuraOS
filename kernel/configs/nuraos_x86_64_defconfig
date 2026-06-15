@@ -110,7 +110,13 @@ CONFIG_SECCOMP_FILTER=y
 CONFIG_PROC_KCORE=n
 CONFIG_SECURITY_DMESG_RESTRICT=y
 
-# Disable user namespaces to reduce attack surface (no container use case).
+# Namespace support: enable IPC, UTS, PID, mount, and network namespaces for
+# per-service isolation. User namespaces remain disabled (no container use case).
+CONFIG_NAMESPACES=y
+CONFIG_IPC_NS=y
+CONFIG_UTS_NS=y
+CONFIG_PID_NS=y
+CONFIG_NET_NS=y
 CONFIG_USER_NS=n
 
 # Panic on data corruption detected by the kernel.
