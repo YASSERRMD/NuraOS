@@ -78,6 +78,16 @@ type StatusComponent struct {
 	Detail string `json:"detail,omitempty"` // human-readable context
 }
 
+// DiskStatus reports the current disk space situation for the /data partition.
+type DiskStatus struct {
+	Path       string  `json:"path"`
+	TotalBytes uint64  `json:"total_bytes"`
+	UsedBytes  uint64  `json:"used_bytes"`
+	FreeBytes  uint64  `json:"free_bytes"`
+	UsedPct    float64 `json:"used_pct"`
+	Status     string  `json:"status"` // "ok" | "warn" | "critical"
+}
+
 // StatusResponse is the payload for GET /status on the gateway (Phase 31).
 type StatusResponse struct {
 	Overall    string            `json:"overall"` // "ok" | "degraded"
@@ -85,5 +95,6 @@ type StatusResponse struct {
 	Uptime     int64             `json:"uptime_seconds"`
 	MachineID  string            `json:"machine_id,omitempty"`
 	Hostname   string            `json:"hostname,omitempty"`
+	Disk       *DiskStatus       `json:"disk,omitempty"`
 	Components []StatusComponent `json:"components"`
 }

@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/identity"
 )
 
@@ -73,6 +74,15 @@ func main() {
 			h.hostname = hn
 		}
 	}
+
+	// Disk space monitor: polls /data every 30s; surfaces status in /status and /metrics.
+	diskMon := &diskmon.Monitor{
+		Path:        dataDir,
+		WarnPct:     diskmon.DefaultWarnPct,
+		CriticalPct: diskmon.DefaultCriticalPct,
+	}
+	h.diskMon = diskMon
+	go diskMon.Run(context.Background())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)

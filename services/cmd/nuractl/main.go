@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 )
 
 func main() {
@@ -97,6 +98,8 @@ func main() {
 	case "disable":
 		requireArg(cmd, rest)
 		cmdDisable(client, rest[0], outputJSON)
+	case "reclaim":
+		cmdReclaim(outputJSON)
 	default:
 		fmt.Fprintf(os.Stderr, "nuractl: unknown command %q\n\n", cmd)
 		printUsage()
@@ -193,6 +196,26 @@ func cmdDisable(c *ctlsock.Client, svc string, asJSON bool) {
 	fmt.Println(resp.Message)
 }
 
+func cmdReclaim(asJSON bool) {
+	dataDir := os.Getenv("NURA_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+	freed, err := diskmon.Reclaim(diskmon.ReclaimOptions{
+		DataDir:    dataDir,
+		SessionCap: 512 * 1024 * 1024,
+		LogsCap:    128 * 1024 * 1024,
+	})
+	if err != nil {
+		fatalf("reclaim: %v", err)
+	}
+	if asJSON {
+		printJSON(map[string]interface{}{"freed_bytes": freed, "data_dir": dataDir})
+		return
+	}
+	fmt.Printf("reclaim: freed %d bytes from %s\n", freed, dataDir)
+}
+
 // --- helpers ---
 
 func must(resp ctlsock.Response, err error) ctlsock.Response {
@@ -235,6 +258,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  logs    <service> [-n N]  Show last N log lines (default 50)")
 	fmt.Fprintln(os.Stderr, "  enable  <service>         Mark service enabled")
 	fmt.Fprintln(os.Stderr, "  disable <service>         Mark service disabled")
+	fmt.Fprintln(os.Stderr, "  reclaim                   Free space by trimming sessions and logs")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json          JSON output")

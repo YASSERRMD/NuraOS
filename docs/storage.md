@@ -137,3 +137,82 @@ and verifies the filesystem with `e2fsck -fn`. Requires root (loop mount).
 | Power loss during journal append | Partial last record only; all prior records intact |
 | Power loss during ext4 commit | e2fsck restores metadata consistency on next boot |
 | Disk full | Journal rotation drops oldest day files; `atomicfile.Write` fails explicitly |
+
+---
+
+## Space policy
+
+The goal of the space policy is to ensure `/data` never fills to the point that
+the appliance becomes non-functional.
+
+### Thresholds
+
+| Level    | Default | Behaviour |
+|----------|---------|-----------|
+| Warn     | 80% full | Auto-reclaim triggered; logged at Warn severity |
+| Critical | 95% full | New chat sessions refused (HTTP 503); logged at Error severity |
+
+### Disk monitor
+
+`diskmon.Monitor` in `services/internal/diskmon` polls the `/data` filesystem
+every 30 seconds using `syscall.Statfs`. State transitions (ok -> warn, warn ->
+critical, and recoveries) fire once on change and are broadcast to registered
+callbacks. The gateway reads the most recent snapshot for `/status` and
+`/metrics` without blocking.
+
+### Per-subtree soft quotas
+
+| Subtree | Default cap | Reclaim strategy |
+|---------|-------------|------------------|
+| `/data/sessions` | 512 MiB | Delete oldest session JSONL files first |
+| `/data/logs` | 128 MiB | Delete oldest log files first |
+| `/data/journal` | 100 MiB | Journal writer auto-rotates oldest day files |
+| `/data/models` | (unlimited) | Operator managed; models are not auto-deleted |
+
+Quotas are enforced by `diskmon.Reclaim` which walks each subtree, sorts files
+by modification time (oldest first), and removes files until the subtree is
+within its cap. The journal is not in the reclaim path because `journal.Writer`
+already enforces its own 100 MiB cap on every write.
+
+### Automatic reclaim
+
+When the disk transitions from ok to warn, `nura-manager` calls `Reclaim`
+automatically with the default per-subtree caps above. The freed bytes and
+resulting usage are logged.
+
+### Manual reclaim
+
+```sh
+nuractl reclaim              # trim sessions (512 MiB cap) and logs (128 MiB cap)
+nuractl reclaim --json       # same, JSON output: {"freed_bytes":N,"data_dir":"/data"}
+```
+
+`NURA_DATA_DIR` overrides the default `/data` root when set.
+
+### Disk metrics
+
+The gateway exposes disk metrics in Prometheus text format at `GET /metrics`:
+
+```
+nura_disk_total_bytes     <total filesystem bytes>
+nura_disk_used_bytes      <bytes in use>
+nura_disk_available_bytes <bytes available to processes>
+nura_disk_used_percent    <float, 0-100>
+```
+
+And in the JSON health summary at `GET /status`:
+
+```json
+{
+  "disk": {
+    "path": "/data",
+    "total_bytes": 2147483648,
+    "used_bytes": 536870912,
+    "free_bytes": 1610612736,
+    "used_pct": 25.0,
+    "status": "ok"
+  }
+}
+```
+
+`status` is `"ok"`, `"warn"`, or `"critical"` and mirrors the monitor state.

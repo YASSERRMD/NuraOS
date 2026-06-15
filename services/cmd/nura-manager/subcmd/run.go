@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/identity"
 	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/lifecycle"
@@ -107,6 +108,29 @@ func Run(dir string) error {
 	}
 
 	_ = timeMgr // available for future service injection
+
+	// Disk space monitor: automatic reclaim at warn, log at critical.
+	diskMon := &diskmon.Monitor{
+		Path: dataDir,
+		Log:  log,
+		OnWarn: func(u diskmon.Usage) {
+			freed, err := diskmon.Reclaim(diskmon.ReclaimOptions{
+				DataDir:    dataDir,
+				SessionCap: 512 * 1024 * 1024,
+				LogsCap:    128 * 1024 * 1024,
+			})
+			if err != nil {
+				log.Warn("disk warn: auto-reclaim error", "err", err)
+			} else {
+				log.Info("disk warn: auto-reclaim complete", "freed_bytes", freed, "used_pct", u.UsedPct)
+			}
+		},
+		OnCritical: func(u diskmon.Usage) {
+			log.Error("disk critical: new sessions will be refused", "used_pct", u.UsedPct)
+		},
+	}
+	go diskMon.Run(ctx)
+
 	mgr := lifecycle.NewManager(log, jw)
 
 	// Start the control socket server so nuractl can query and control services.
