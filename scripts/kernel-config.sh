@@ -34,6 +34,6 @@ make -C "${LINUX_DIR}" ARCH=x86_64 olddefconfig
 log ".config written to ${LINUX_DIR}/.config"
 log "summary:"
 grep -E "^(CONFIG_MODULES|CONFIG_EXT4_FS|CONFIG_VIRTIO|CONFIG_SERIAL_8250|CONFIG_BLK_DEV_INITRD)=" \
-    "${LINUX_DIR}/.config" | sed 's/^/  /'
+    "${LINUX_DIR}/.config" | sed 's/^/  /' || true
 
 log "done."
