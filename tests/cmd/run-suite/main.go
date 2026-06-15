@@ -26,6 +26,7 @@ import (
 
 	"github.com/yasserrmd/nuraos/tests/harness"
 	"github.com/yasserrmd/nuraos/tests/reporters"
+	agentcore "github.com/yasserrmd/nuraos/tests/suites/agent-core"
 	buildandboot "github.com/yasserrmd/nuraos/tests/suites/build-and-boot"
 )
 
@@ -81,6 +82,7 @@ type SuiteFunc func(ctx context.Context, inst *harness.QEMUInstance) []harness.R
 var suiteRegistry = map[string]SuiteFunc{
 	"smoke":          runSmokeFunc,
 	"build-and-boot": buildandboot.Run,
+	"agent-core":     agentcore.Run,
 }
 
 func availableSuites() []string {
