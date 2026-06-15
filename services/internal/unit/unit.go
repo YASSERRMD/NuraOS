@@ -66,6 +66,18 @@ type Readiness struct {
 	Timeout int           `toml:"timeout"`
 }
 
+// SocketActivation configures lazy-start socket activation for a unit.
+// When enabled the manager pre-opens the listen socket; the service is started
+// only when the first client connects. The socket fd is passed to the service
+// as LISTEN_FDS=1 / LISTEN_PID=<pid>. An optional idle_timeout stops the
+// service when there has been no connection activity for that many seconds.
+type SocketActivation struct {
+	Enabled     bool   `toml:"enabled"`
+	Network     string `toml:"network"`      // "tcp" or "unix"
+	Address     string `toml:"address"`      // bind address
+	IdleTimeout int    `toml:"idle_timeout"` // 0 = no idle stop
+}
+
 // Unit is the in-memory representation of a parsed service unit file.
 type Unit struct {
 	// Name is the canonical service identifier (must be unique).
@@ -90,6 +102,8 @@ type Unit struct {
 	Resources Resources `toml:"resources"`
 	// Readiness describes the readiness probe.
 	Readiness Readiness `toml:"readiness"`
+	// SocketActivation configures lazy socket-activated start.
+	SocketActivation SocketActivation `toml:"socket_activation"`
 	// Enabled controls whether the unit participates in the start plan.
 	Enabled bool `toml:"enabled"`
 }
