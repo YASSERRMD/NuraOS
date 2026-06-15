@@ -1,31 +1,14 @@
 #!/bin/sh
-# /sbin/supervisor -- NuraOS service supervisor (PID 1 after /init exec's us).
+# /sbin/supervisor -- NuraOS PID-1 init wrapper.
 #
-# Responsibilities:
-#  - Start services in declared order with health checks between stages.
-#  - Monitor services and restart them on crash with capped exponential backoff.
-#  - Crash-loop breaker: if a service crashes CRASH_LOOP_LIMIT times within
-#    CRASH_LOOP_WINDOW seconds, suspend it for CRASH_LOOP_BACKOFF seconds.
-#  - Watchdog: periodically probe each service health endpoint; kill and let
-#    start_service restart any that stop responding.
-#  - Forward SIGTERM to all children for clean shutdown; force-kill survivors.
-#  - Reap zombie children (BusyBox sh at PID 1 calls waitpid implicitly).
-#  - Log structured boot stages to console and /data/logs/boot.log.
-#  - Recovery mode: nura.recovery=1 on cmdline bypasses service start.
+# Phase 56+: delegates service management to nura-manager, which reads
+# declarative TOML unit files from /etc/nura/services/.
+#
+# Recovery mode: nura.recovery=1 on the kernel cmdline drops to a shell
+# without starting any services.
 
 LOG_FILE=/data/logs/boot.log
 STAGE_FILE=/tmp/supervisor.stage
-
-MAX_RESTARTS=5
-RESTART_DELAY_INIT=1
-RESTART_DELAY_MAX=30
-
-CRASH_LOOP_LIMIT=5
-CRASH_LOOP_WINDOW=60
-CRASH_LOOP_BACKOFF=120
-
-WATCHDOG_INTERVAL=30
-WATCHDOG_TIMEOUT=5
 
 log() {
     TS=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
@@ -53,237 +36,20 @@ rm -f "${STAGE_FILE}" 2>/dev/null || true
 
 log "supervisor starting (PID $$)"
 
-SHUTDOWN=0
-
-cleanup() {
-    SHUTDOWN=1
-    log "SIGTERM received; shutting down services"
-    stage "shutdown"
-
-    for name in llama_server nura_agent gateway; do
-        eval "pid=\${${name}_pid:-}"
-        if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-            log "sending SIGTERM to ${name} (PID ${pid})"
-            kill -TERM "${pid}" 2>/dev/null || true
-        fi
-    done
-
-    # Wait up to 15 s for services to drain and exit cleanly.
-    i=0
-    while [ "${i}" -lt 15 ]; do
-        all_gone=1
-        for name in llama_server nura_agent gateway; do
-            eval "pid=\${${name}_pid:-}"
-            if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-                all_gone=0
-                break
-            fi
-        done
-        [ "${all_gone}" -eq 1 ] && break
-        sleep 1
-        i=$((i + 1))
-    done
-
-    # Force-kill any survivors.
-    for name in llama_server nura_agent gateway; do
-        eval "pid=\${${name}_pid:-}"
-        if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-            log "force-killing ${name} (PID ${pid}) after drain timeout"
-            kill -KILL "${pid}" 2>/dev/null || true
-        fi
-    done
-
-    log "flushing logs and halting"
-    sync
-    halt -f 2>/dev/null || poweroff -f 2>/dev/null || true
-}
-
-trap cleanup TERM INT
-
 if has_flag "nura.recovery=1"; then
     log "recovery mode: skipping service start"
     stage "recovery"
-    log "dropping to recovery shell (exit to restart supervisor)"
-    exec sh
-fi
-
-wait_healthy() {
-    local name="$1" url="$2" timeout="${3:-30}" elapsed=0
-    log "waiting for ${name} health at ${url} (timeout ${timeout}s) ..."
-    while [ "${elapsed}" -lt "${timeout}" ]; do
-        if wget -q -O /dev/null "${url}" 2>/dev/null; then
-            log "${name}: healthy"
-            return 0
-        fi
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-    log "WARNING: ${name} health timeout after ${timeout}s; continuing anyway"
-    return 1
-}
-
-wait_agent_socket() {
-    local path="$1" timeout="${2:-30}" elapsed=0
-    log "waiting for agent socket ${path} (timeout ${timeout}s) ..."
-    while [ "${elapsed}" -lt "${timeout}" ]; do
-        if grep -q "${path}" /proc/net/unix 2>/dev/null; then
-            log "agent socket ready"
-            return 0
-        fi
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-    log "WARNING: agent socket timeout after ${timeout}s; continuing anyway"
-    return 1
-}
-
-probe_ok() {
-    wget -q -O /dev/null -T "${WATCHDOG_TIMEOUT}" "$1" 2>/dev/null
-}
-
-# Start a service in a restart loop with exponential backoff and crash-loop
-# detection. Runs in a background subshell; the caller & the PID.
-start_service() {
-    local name="$1"
-    shift
-    local cmd="$*"
-    local restarts=0
-    local delay="${RESTART_DELAY_INIT}"
-    local crash_times_file="/tmp/supervisor_crashes_${name}"
-    : > "${crash_times_file}"
-
-    while [ "${SHUTDOWN}" -eq 0 ]; do
-        log "starting ${name}: ${cmd}"
-        ${cmd} &
-        pid=$!
-        eval "${name}_pid=${pid}"
-        log "${name} started (PID ${pid})"
-
-        wait "${pid}" 2>/dev/null
-        exit_code=$?
-        [ "${SHUTDOWN}" -eq 1 ] && return 0
-
-        now=$(date +%s 2>/dev/null || echo 0)
-        echo "${now}" >> "${crash_times_file}"
-        log "${name} exited (code ${exit_code})"
-
-        # Crash-loop breaker.
-        window_start=$((now - CRASH_LOOP_WINDOW))
-        recent=$(awk -v t="${window_start}" '$1 >= t' "${crash_times_file}" 2>/dev/null | wc -l)
-        if [ "${recent}" -ge "${CRASH_LOOP_LIMIT}" ]; then
-            log "WARN: ${name} crash-loop detected (${recent} crashes in ${CRASH_LOOP_WINDOW}s)"
-            log "WARN: suspending ${name} for ${CRASH_LOOP_BACKOFF}s before retry"
-            sleep "${CRASH_LOOP_BACKOFF}"
-            : > "${crash_times_file}"
-            restarts=0
-            delay="${RESTART_DELAY_INIT}"
-            continue
-        fi
-
-        restarts=$((restarts + 1))
-        if [ "${restarts}" -ge "${MAX_RESTARTS}" ]; then
-            restarts=0
-            delay="${RESTART_DELAY_INIT}"
-        fi
-
-        log "restarting ${name} in ${delay}s ..."
-        sleep "${delay}"
-        delay=$((delay * 2))
-        [ "${delay}" -gt "${RESTART_DELAY_MAX}" ] && delay="${RESTART_DELAY_MAX}"
-    done
-}
-
-# Watchdog: probe services periodically; kill (to trigger restart) if hung.
-watchdog_loop() {
-    while [ "${SHUTDOWN}" -eq 0 ]; do
-        sleep "${WATCHDOG_INTERVAL}"
-        [ "${SHUTDOWN}" -eq 1 ] && return
-        if [ -n "${llama_server_pid:-}" ] && kill -0 "${llama_server_pid}" 2>/dev/null; then
-            if ! probe_ok http://127.0.0.1:8081/health; then
-                log "WATCHDOG: llama-server unresponsive; killing for restart"
-                kill -KILL "${llama_server_pid}" 2>/dev/null || true
-            fi
-        fi
-        if [ -n "${gateway_pid:-}" ] && kill -0 "${gateway_pid}" 2>/dev/null; then
-            if ! probe_ok http://127.0.0.1:8080/healthz; then
-                log "WATCHDOG: gateway unresponsive; killing for restart"
-                kill -KILL "${gateway_pid}" 2>/dev/null || true
-            fi
-        fi
-    done
-}
-
-llama_server_pid=""
-nura_agent_pid=""
-gateway_pid=""
-
-# Boot stages.
-
-stage "stage1-llama-server"
-if [ -x /sbin/llama-server ]; then
-    MODEL_PATH=""
-    CTX_SIZE=2048
-    if [ -f /data/model.json ]; then
-        MODEL_PATH="$(grep '"path"' /data/model.json | sed 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -1)"
-        CTX_RAW="$(grep '"context_length"' /data/model.json | sed 's/[^0-9]*\([0-9]*\).*/\1/' | head -1)"
-        [ -n "${CTX_RAW}" ] && CTX_SIZE="${CTX_RAW}"
-    fi
-    if [ -z "${MODEL_PATH}" ] || [ ! -f "${MODEL_PATH}" ]; then
-        MODEL_PATH="$(find /data/models -name '*.gguf' 2>/dev/null | head -1)"
-    fi
-    if [ -z "${MODEL_PATH}" ]; then
-        log "WARNING: no model found in /data/models; llama-server will not start"
-    else
-        log "loading model: ${MODEL_PATH} (ctx ${CTX_SIZE})"
-        start_service llama_server \
-            /sbin/llama-server --model "${MODEL_PATH}" --ctx-size "${CTX_SIZE}" \
-                --host 127.0.0.1 --port 8081 --log-disable &
-        wait_healthy llama-server http://127.0.0.1:8081/health 120 || true
-    fi
-else
-    log "llama-server not installed yet (Phase 16+); skipping"
-fi
-
-stage "stage2-nura-agent"
-if [ -x /sbin/nura-agent ]; then
-    # Run as the nura service account (uid=1000) to drop root.
-    if command -v su >/dev/null 2>&1 && getent passwd nura >/dev/null 2>&1; then
-        start_service nura_agent su -s /bin/sh nura -c "exec /sbin/nura-agent run" &
-    else
-        log "WARN: nura user absent or su unavailable; running nura-agent as root"
-        start_service nura_agent /sbin/nura-agent run &
-    fi
-    sleep 2
-    log "nura-agent started"
-else
-    log "nura-agent not installed yet; dropping to shell for now"
-    stage "no-agent-shell"
     log "Type 'poweroff' or 'halt' to exit."
     exec sh
 fi
 
-stage "stage3-gateway"
-if [ -x /sbin/gateway ]; then
-    wait_agent_socket /run/nura-agent.sock 30 || true
-    # Run as the nura service account (uid=1000) to drop root.
-    if command -v su >/dev/null 2>&1 && getent passwd nura >/dev/null 2>&1; then
-        start_service gateway su -s /bin/sh nura -c "exec /sbin/gateway" &
-    else
-        log "WARN: nura user absent or su unavailable; running gateway as root"
-        start_service gateway /sbin/gateway &
-    fi
+stage "service-manager"
+
+if [ -x /sbin/nura-manager ]; then
+    log "delegating to nura-manager"
+    exec /sbin/nura-manager run
 else
-    log "gateway not installed yet (Phase 28+); skipping"
+    log "nura-manager not found; falling back to legacy supervisor"
+    # Legacy fallback preserved for early boot phases (pre-56 images).
+    exec /sbin/supervisor-legacy
 fi
-
-watchdog_loop &
-watchdog_pid=$!
-
-stage "running"
-log "all services started; supervisor monitoring (watchdog PID ${watchdog_pid})"
-
-while [ "${SHUTDOWN}" -eq 0 ]; do
-    sleep 5
-done
-
-log "supervisor: clean exit"

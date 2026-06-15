@@ -1,0 +1,25 @@
+name        = "llama-server"
+description = "llama.cpp inference server"
+exec        = "/sbin/llama-server"
+args        = ["--host", "127.0.0.1", "--port", "8081", "--log-disable"]
+type        = "longrun"
+user        = "root"
+enabled     = true
+
+[restart]
+policy            = "on-failure"
+max_restarts      = 5
+backoff_initial   = 1
+backoff_max       = 30
+crash_loop_limit  = 5
+crash_loop_window = 60
+crash_loop_backoff = 120
+
+[resources]
+cpu_weight = 200
+memory_max = "0"
+
+[readiness]
+type    = "http"
+url     = "http://127.0.0.1:8081/health"
+timeout = 120
