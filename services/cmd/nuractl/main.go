@@ -40,6 +40,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/compliance"
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/integtest"
+	"github.com/yasserrmd/nuraos/services/internal/perf"
 	"github.com/yasserrmd/nuraos/services/internal/secaudit"
 	"github.com/yasserrmd/nuraos/services/internal/delta"
 	"github.com/yasserrmd/nuraos/services/internal/diagbundle"
@@ -135,6 +136,8 @@ func main() {
 		cmdSecaudit(rest, outputJSON)
 	case "data":
 		cmdData(rest, outputJSON)
+	case "perf":
+		cmdPerf(rest, outputJSON)
 	case "integtest":
 		cmdIntegtest(rest, outputJSON)
 	case "diag":
@@ -736,6 +739,60 @@ func cmdSelftest(args []string, asJSON bool) {
 	}
 }
 
+func cmdPerf(args []string, asJSON bool) {
+	// Read measurements from environment variables, matching the CI gate
+	// convention.  Unknown variables are silently ignored (gate is skipped).
+	measurements := map[string]float64{}
+	tpsMeasurements := map[string]float64{}
+
+	parseMeasurement := func(key, envVar string, dst map[string]float64) {
+		raw := os.Getenv(envVar)
+		if raw == "" {
+			return
+		}
+		var v float64
+		if _, err := fmt.Sscan(raw, &v); err == nil {
+			dst[key] = v
+		}
+	}
+
+	parseMeasurement("boot-to-agent", "NURA_BOOT_MS", measurements)
+	parseMeasurement("boot-to-first-token", "NURA_FIRST_TOKEN_MS", measurements)
+	parseMeasurement("idle-rss", "NURA_IDLE_RSS_MIB", measurements)
+	parseMeasurement("peak-rss", "NURA_PEAK_RSS_MIB", measurements)
+	parseMeasurement("image-size", "NURA_IMAGE_MB", measurements)
+	parseMeasurement("tokens-per-sec", "NURA_TOKENS_PER_SEC", tpsMeasurements)
+
+	upperRep := perf.Evaluate(perf.StandardGates, measurements)
+	tpsRep := perf.EvaluateThroughput(perf.ThroughputGates, tpsMeasurements)
+
+	// Merge for reporting.
+	combined := perf.BudgetReport{
+		Results: append(upperRep.Results, tpsRep.Results...),
+		Pass:    upperRep.Pass + tpsRep.Pass,
+		Fail:    upperRep.Fail + tpsRep.Fail,
+		Skip:    upperRep.Skip + tpsRep.Skip,
+	}
+	if combined.Fail == 0 {
+		combined.Overall = "pass"
+	} else {
+		combined.Overall = "fail"
+	}
+
+	if asJSON {
+		printJSON(combined)
+		if combined.Fail > 0 {
+			os.Exit(2)
+		}
+		return
+	}
+
+	fmt.Print(perf.FormatHuman(combined))
+	if combined.Fail > 0 {
+		os.Exit(2)
+	}
+}
+
 func cmdIntegtest(args []string, asJSON bool) {
 	gatewayURL := os.Getenv("NURA_GATEWAY_URL")
 	agentSocket := os.Getenv("NURA_AGENT_SOCKET")
@@ -1033,6 +1090,9 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "                            Create a consistent backup archive of /data")
 	fmt.Fprintln(os.Stderr, "  restore <archive> [--dest DIR] [--dry-run] [--passphrase P] [--sha256 H]")
 	fmt.Fprintln(os.Stderr, "                            Restore /data from a backup archive")
+	fmt.Fprintln(os.Stderr, "  perf                      Evaluate performance budget gates (exit 2 on regression)")
+	fmt.Fprintln(os.Stderr, "                            Gates read env: NURA_BOOT_MS NURA_FIRST_TOKEN_MS")
+	fmt.Fprintln(os.Stderr, "                            NURA_IDLE_RSS_MIB NURA_PEAK_RSS_MIB NURA_IMAGE_MB NURA_TOKENS_PER_SEC")
 	fmt.Fprintln(os.Stderr, "  integtest [--gateway URL] [--agent-socket PATH]")
 	fmt.Fprintln(os.Stderr, "                            Run full system integration test matrix (exit 2 on failure)")
 	fmt.Fprintln(os.Stderr, "")
