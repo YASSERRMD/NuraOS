@@ -254,6 +254,79 @@ func (h *handlers) configHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+const (
+	defaultModelManifestPath = "/data/model.json"
+	defaultModelDir          = "/data/models"
+)
+
+func modelManifestPath() string {
+	if v := os.Getenv("MODEL_MANIFEST"); v != "" {
+		return v
+	}
+	return defaultModelManifestPath
+}
+
+func modelDirPath() string {
+	if v := os.Getenv("MODEL_DIR"); v != "" {
+		return v
+	}
+	return defaultModelDir
+}
+
+// modelEntry describes a GGUF file found in the models directory.
+type modelEntry struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"size_bytes"`
+	SizeMB    int64  `json:"size_mb"`
+}
+
+// modelsHandler serves GET /models.
+// It returns the active model manifest and a list of available .gguf files.
+// No agent IPC is required; the handler reads the filesystem directly.
+func (h *handlers) modelsHandler(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epModels)
+
+	manifestPath := modelManifestPath()
+	dir := modelDirPath()
+
+	// Read active model manifest (may not exist on a fresh install).
+	var active json.RawMessage
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		active = json.RawMessage(data)
+	}
+
+	// List available .gguf files in the models directory.
+	available := []modelEntry{}
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if len(name) < 5 || name[len(name)-5:] != ".gguf" {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			fullPath := dir + "/" + name
+			available = append(available, modelEntry{
+				Name:      name[:len(name)-5],
+				Path:      fullPath,
+				SizeBytes: info.Size(),
+				SizeMB:    info.Size() / 1024 / 1024,
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"active":    active,
+		"available": available,
+	})
+}
+
 // statusHandler serves GET /status with a human-readable JSON health summary.
 // Returns 200 when all components are ok; 503 when any component is degraded.
 func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {
