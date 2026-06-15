@@ -34,6 +34,7 @@ func (h *stubHandler) ServiceLogs(name string, n int) ([]string, error) {
 }
 func (h *stubHandler) EnableService(name string) error  { return nil }
 func (h *stubHandler) DisableService(name string) error { return nil }
+func (h *stubHandler) Shutdown(reboot bool) error       { return nil }
 
 func startTestServer(t *testing.T) (socketPath string, stop func()) {
 	t.Helper()

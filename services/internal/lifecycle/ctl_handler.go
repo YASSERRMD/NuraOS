@@ -11,9 +11,9 @@ import (
 // CtlHandler adapts a Manager to the ctlsock.Handler interface so the
 // control socket server can query and control services.
 type CtlHandler struct {
-	mgr     *Manager
-	unitDir string
-	plan    []*unitRef
+	mgr        *Manager
+	plan       []*unitRef
+	shutdownFn func(reboot bool)
 }
 
 type unitRef struct {
@@ -23,12 +23,14 @@ type unitRef struct {
 
 // NewCtlHandler wraps mgr for use as a control socket handler.
 // plan records all unit names so enable/disable can be applied.
-func NewCtlHandler(mgr *Manager, plan []string) *CtlHandler {
+// shutdownFn is called when a poweroff or reboot command is received; it must
+// be non-blocking (e.g., send on a buffered channel).
+func NewCtlHandler(mgr *Manager, plan []string, shutdownFn func(reboot bool)) *CtlHandler {
 	refs := make([]*unitRef, len(plan))
 	for i, name := range plan {
 		refs[i] = &unitRef{name: name, enabled: true}
 	}
-	return &CtlHandler{mgr: mgr, plan: refs}
+	return &CtlHandler{mgr: mgr, plan: refs, shutdownFn: shutdownFn}
 }
 
 // ListServices implements ctlsock.Handler.
@@ -126,6 +128,15 @@ func (h *CtlHandler) DisableService(name string) error {
 		}
 	}
 	return fmt.Errorf("unknown service: %s", name)
+}
+
+// Shutdown implements ctlsock.Handler.
+func (h *CtlHandler) Shutdown(reboot bool) error {
+	if h.shutdownFn == nil {
+		return fmt.Errorf("shutdown not configured")
+	}
+	h.shutdownFn(reboot)
+	return nil
 }
 
 func toServiceInfo(s StatusSnapshot) ctlsock.ServiceInfo {

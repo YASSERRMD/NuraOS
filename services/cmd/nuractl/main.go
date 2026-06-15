@@ -13,6 +13,8 @@
 //	nuractl logs   <service> [-n N] # last N log lines (default 50)
 //	nuractl enable  <service>       # mark service enabled
 //	nuractl disable <service>       # mark service disabled
+//	nuractl poweroff                # graceful shutdown then power off
+//	nuractl reboot                  # graceful shutdown then reboot
 //
 // Flags:
 //
@@ -100,6 +102,10 @@ func main() {
 		cmdDisable(client, rest[0], outputJSON)
 	case "reclaim":
 		cmdReclaim(outputJSON)
+	case "poweroff":
+		cmdShutdown(client, outputJSON, false)
+	case "reboot":
+		cmdShutdown(client, outputJSON, true)
 	default:
 		fmt.Fprintf(os.Stderr, "nuractl: unknown command %q\n\n", cmd)
 		printUsage()
@@ -196,6 +202,25 @@ func cmdDisable(c *ctlsock.Client, svc string, asJSON bool) {
 	fmt.Println(resp.Message)
 }
 
+func cmdShutdown(c *ctlsock.Client, asJSON bool, reboot bool) {
+	cmd := ctlsock.CmdPoweroff
+	label := "poweroff"
+	if reboot {
+		cmd = ctlsock.CmdReboot
+		label = "reboot"
+	}
+	resp := must(c.Send(ctlsock.Request{Command: cmd}))
+	if asJSON {
+		printJSON(resp)
+		return
+	}
+	if resp.Message != "" {
+		fmt.Println(resp.Message)
+	} else {
+		fmt.Printf("%s initiated\n", label)
+	}
+}
+
 func cmdReclaim(asJSON bool) {
 	dataDir := os.Getenv("NURA_DATA_DIR")
 	if dataDir == "" {
@@ -259,6 +284,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  enable  <service>         Mark service enabled")
 	fmt.Fprintln(os.Stderr, "  disable <service>         Mark service disabled")
 	fmt.Fprintln(os.Stderr, "  reclaim                   Free space by trimming sessions and logs")
+	fmt.Fprintln(os.Stderr, "  poweroff                  Graceful shutdown then power off")
+	fmt.Fprintln(os.Stderr, "  reboot                    Graceful shutdown then reboot")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json          JSON output")
