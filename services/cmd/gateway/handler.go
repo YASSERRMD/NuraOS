@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ const maxChatBodyBytes = 64 * 1024
 type handlers struct {
 	agentClient *agent.Client
 	store       *MetricsStore
+	ts          *tokenStore // nil when auth is disabled (tests)
 }
 
 func newHandlers(socketPath string, store *MetricsStore) *handlers {
@@ -34,6 +36,10 @@ func newHandlers(socketPath string, store *MetricsStore) *handlers {
 		agentClient: agent.New(socketPath, socketProbeTO),
 		store:       store,
 	}
+}
+
+func (h *handlers) authEnabled() bool {
+	return h.ts != nil && h.ts.get() != ""
 }
 
 func (h *handlers) healthz(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +203,55 @@ func (h *handlers) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	h.store.WriteTo(w, agentMetPtr)
+}
+
+// configHandler serves GET /config and returns the effective gateway
+// configuration. Values reflect environment variables and compiled-in defaults.
+// No secrets are included in the response.
+func (h *handlers) configHandler(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epConfig)
+
+	port := os.Getenv("GATEWAY_PORT")
+	if port == "" {
+		port = defaultPort
+	}
+	bind := "127.0.0.1"
+	if os.Getenv("GATEWAY_BIND_LAN") == "1" {
+		bind = "0.0.0.0"
+	}
+
+	type gwConf struct {
+		Version       string  `json:"version"`
+		Port          string  `json:"port"`
+		Bind          string  `json:"bind"`
+		AuthEnabled   bool    `json:"auth_enabled"`
+		RateRPS       float64 `json:"rate_rps"`
+		RateBurst     float64 `json:"rate_burst"`
+		MaxConcurrent int     `json:"max_concurrent"`
+		PprofEnabled  bool    `json:"pprof_enabled"`
+	}
+	type agentConf struct {
+		Socket string `json:"socket"`
+	}
+
+	writeJSON(w, http.StatusOK, struct {
+		Gateway gwConf    `json:"gateway"`
+		Agent   agentConf `json:"agent"`
+	}{
+		Gateway: gwConf{
+			Version:       version,
+			Port:          port,
+			Bind:          bind,
+			AuthEnabled:   h.authEnabled(),
+			RateRPS:       defaultRPS,
+			RateBurst:     defaultBurst,
+			MaxConcurrent: maxConcurrent,
+			PprofEnabled:  os.Getenv("NURA_PPROF") == "1",
+		},
+		Agent: agentConf{
+			Socket: agentSocket,
+		},
+	})
 }
 
 // statusHandler serves GET /status with a human-readable JSON health summary.

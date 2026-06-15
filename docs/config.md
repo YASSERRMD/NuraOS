@@ -106,6 +106,63 @@ max_tool_iterations = 10
 log_level = "info"
 ```
 
+## Interactive configuration
+
+Run the configure helper after first boot or to change provider:
+
+```sh
+./scripts/configure.sh
+```
+
+The script prompts for:
+- Provider choice (`local`, `anthropic`, `openai`)
+- API key (if cloud provider selected)
+- Optional gateway bearer token
+
+For automated (CI/scripted) setup pass `--non-interactive` and set the relevant
+environment variables (`NURA_PROVIDER`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`NURA_GATEWAY_TOKEN`).
+
+## GET /config endpoint
+
+The gateway exposes the effective configuration (no secrets) at `GET /config`:
+
+```json
+{
+  "gateway": {
+    "version": "dev",
+    "port": "8080",
+    "bind": "127.0.0.1",
+    "auth_enabled": false,
+    "rate_rps": 1.0,
+    "rate_burst": 10,
+    "max_concurrent": 4,
+    "pprof_enabled": false
+  },
+  "agent": {
+    "socket": "/run/nura-agent.sock"
+  }
+}
+```
+
+This endpoint is subject to bearer auth when a token is configured.
+Useful for debugging; safe to expose to operators.
+
+## Provider switching at runtime
+
+Pass `"provider"` in the chat request body to override the default for that
+turn:
+
+```json
+{
+  "messages": [{"role": "user", "content": "Hello"}],
+  "provider": "anthropic"
+}
+```
+
+Valid provider names: `local`, `anthropic`, `openai`. The agent ignores unknown
+values and falls back to the configured default.
+
 ## Validation
 
 ```sh
