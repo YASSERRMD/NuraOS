@@ -115,7 +115,14 @@ ip link set eth0 up 2>/dev/null && \
     log "eth0: DHCP OK" || warn "eth0 DHCP failed; continuing without network"
 
 # Write a minimal resolv.conf if DHCP did not create one.
-[ -f /etc/resolv.conf ] || printf 'nameserver 10.0.2.3\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+# QEMU user-mode NAT provides a DNS forwarder at 10.0.2.3; 1.1.1.1 is the
+# secondary. On a private LAN, the DHCP-provided nameserver is preferred.
+if [ ! -f /etc/resolv.conf ] || [ ! -s /etc/resolv.conf ]; then
+    printf 'nameserver 10.0.2.3\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+    log "DNS: wrote fallback resolv.conf (DHCP did not provide one)"
+fi
+# Log the active nameservers for diagnostics.
+log "DNS: nameservers: $(grep '^nameserver' /etc/resolv.conf | awk '{print $2}' | tr '\n' ' ')"
 
 # ----- Firewall (nftables) -----
 # Applied after DHCP so the ruleset can allow the resolved DNS/gateway IPs.

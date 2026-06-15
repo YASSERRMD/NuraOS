@@ -108,6 +108,27 @@ fi
 # via devtmpfs at boot, but we add console/null as a failsafe.
 # (We cannot use mknod here without root; the cpio header carries device info)
 
+# ----- CA certificate bundle (Phase 80+) -----
+# Ship a CA bundle so Go services can verify TLS against remote providers.
+# Priority: NURA_CA_BUNDLE env var, then common Linux paths, then macOS.
+CA_BUNDLE="${NURA_CA_BUNDLE:-}"
+for candidate in \
+    /etc/ssl/certs/ca-certificates.crt \
+    /etc/pki/tls/certs/ca-bundle.crt \
+    /etc/ssl/ca-bundle.pem \
+    /usr/local/etc/openssl/cert.pem \
+    /etc/ssl/cert.pem; do
+    [ -z "${CA_BUNDLE}" ] && [ -f "${candidate}" ] && CA_BUNDLE="${candidate}"
+done
+
+if [ -n "${CA_BUNDLE}" ]; then
+    mkdir -p "${STAGING}/etc/ssl/certs"
+    install -m 644 "${CA_BUNDLE}" "${STAGING}/etc/ssl/certs/ca-certificates.crt"
+    log "installed CA bundle from ${CA_BUNDLE}"
+else
+    log "WARNING: no CA bundle found; HTTPS TLS verification will use Go fallback"
+fi
+
 # ----- Firewall config and apply script (Phase 79+) -----
 FIREWALL_CONF="${REPO_ROOT}/rootfs/etc/nura/firewall.conf"
 if [ -f "${FIREWALL_CONF}" ]; then

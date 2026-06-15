@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/yasserrmd/nuraos/services/internal/tlsconfig"
 )
 
 // ForwardConfig holds the configuration for optional log forwarding.
@@ -126,12 +129,27 @@ func (f *Forwarder) sendSyslog(r Record, addr string) {
 }
 
 // sendHTTP posts one record as JSON to the configured HTTP endpoint.
+// For HTTPS endpoints the NuraOS CA bundle is used; TLS verification is
+// always enforced and InsecureSkipVerify is never set.
 func (f *Forwarder) sendHTTP(r Record, url string) {
 	body, err := json.Marshal(r)
 	if err != nil {
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+
+	var client *http.Client
+	if strings.HasPrefix(url, "https://") {
+		c, err := tlsconfig.NewClient(tlsconfig.CABundlePath(), 5*time.Second)
+		if err != nil {
+			slog.Warn("journal forwarder: TLS setup failed; dropping record",
+				"url", url, "err", err)
+			return
+		}
+		client = c
+	} else {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return
