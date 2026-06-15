@@ -5,5 +5,6 @@ pub mod provider;
 pub mod repl;
 pub mod routing;
 pub mod secrets;
+pub mod stream;
 pub mod telemetry;
 pub mod version;
