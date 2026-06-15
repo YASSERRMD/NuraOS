@@ -368,3 +368,148 @@ impl Tool for EchoTool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn echo_registry() -> ToolRegistry {
+        let mut r = ToolRegistry::new();
+        r.register(EchoTool);
+        r.allowlist("echo");
+        r
+    }
+
+    fn short_timeout() -> Duration {
+        Duration::from_secs(5)
+    }
+
+    // ---- validate_args ----
+
+    #[test]
+    fn schema_accepts_valid_args() {
+        let schema = json!({
+            "type": "object",
+            "required": ["x"],
+            "properties": { "x": { "type": "integer" } }
+        });
+        assert!(validate_args(&schema, &json!({"x": 42})).is_ok());
+    }
+
+    #[test]
+    fn schema_rejects_missing_required() {
+        let schema = json!({
+            "type": "object",
+            "required": ["x"],
+            "properties": { "x": { "type": "string" } }
+        });
+        let err = validate_args(&schema, &json!({})).unwrap_err();
+        assert!(err.contains("required field 'x'"), "got: {}", err);
+    }
+
+    #[test]
+    fn schema_rejects_wrong_type() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "n": { "type": "integer" } }
+        });
+        let err = validate_args(&schema, &json!({"n": "not-a-number"})).unwrap_err();
+        assert!(err.contains("type"), "got: {}", err);
+    }
+
+    #[test]
+    fn schema_rejects_additional_properties() {
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "a": { "type": "string" } }
+        });
+        let err = validate_args(&schema, &json!({"a": "ok", "b": "extra"})).unwrap_err();
+        assert!(err.contains("unexpected property"), "got: {}", err);
+    }
+
+    #[test]
+    fn schema_passes_non_object_root_through() {
+        let schema = json!({"type": "array"});
+        assert!(validate_args(&schema, &json!(["anything"])).is_ok());
+    }
+
+    // ---- ToolBudget ----
+
+    #[test]
+    fn budget_enforces_max_calls() {
+        let mut b = ToolBudget::new(2);
+        assert!(b.consume().is_ok());
+        assert!(b.consume().is_ok());
+        assert!(b.consume().is_err(), "third call should exceed budget");
+        assert_eq!(b.remaining(), 0);
+        assert_eq!(b.calls_made(), 2);
+    }
+
+    #[test]
+    fn budget_remaining_counts_correctly() {
+        let mut b = ToolBudget::new(5);
+        b.consume().unwrap();
+        assert_eq!(b.remaining(), 4);
+        assert_eq!(b.calls_made(), 1);
+    }
+
+    // ---- ToolRegistry ----
+
+    #[test]
+    fn registry_rejects_non_allowlisted_tool() {
+        let mut r = ToolRegistry::new();
+        r.register(EchoTool);
+        let mut b = ToolBudget::new(10);
+        let result = r.call("echo", json!({"message": "hi"}), short_timeout(), &mut b);
+        assert!(result.is_err());
+        if let Err(NuraError::Tool { detail, .. }) = result {
+            assert!(detail.contains("allowlist"), "got: {}", detail);
+        } else {
+            panic!("expected Tool error");
+        }
+    }
+
+    #[test]
+    fn registry_rejects_schema_mismatch() {
+        let r = echo_registry();
+        let mut b = ToolBudget::new(10);
+        let result = r.call("echo", json!({"message": 42}), short_timeout(), &mut b);
+        assert!(result.is_err());
+        if let Err(NuraError::Tool { detail, .. }) = result {
+            assert!(detail.contains("schema"), "got: {}", detail);
+        } else {
+            panic!("expected Tool error");
+        }
+    }
+
+    #[test]
+    fn registry_rejects_missing_required_field() {
+        let r = echo_registry();
+        let mut b = ToolBudget::new(10);
+        let result = r.call("echo", json!({}), short_timeout(), &mut b);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn registry_executes_valid_call() {
+        let r = echo_registry();
+        let mut b = ToolBudget::new(10);
+        let result = r
+            .call("echo", json!({"message": "hello"}), short_timeout(), &mut b)
+            .unwrap();
+        assert_eq!(result.output["echo"], "hello");
+        assert_eq!(b.calls_made(), 1);
+    }
+
+    #[test]
+    fn registry_enforces_budget_across_calls() {
+        let r = echo_registry();
+        let mut b = ToolBudget::new(1);
+        r.call("echo", json!({"message": "first"}), short_timeout(), &mut b)
+            .unwrap();
+        let result = r.call("echo", json!({"message": "second"}), short_timeout(), &mut b);
+        assert!(result.is_err(), "second call should exhaust budget");
+    }
+}
+
