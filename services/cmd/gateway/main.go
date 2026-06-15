@@ -2,7 +2,8 @@
 //
 // It fronts the Rust nura-agent for off-box access. Phase 28 ships
 // /healthz and /version; Phase 29 adds /chat (SSE) and /tools;
-// Phase 30 adds auth, rate limiting, and loopback-only binding.
+// Phase 30 adds auth, rate limiting, and loopback-only binding;
+// Phase 31 adds /metrics (Prometheus) and /status (health summary).
 package main
 
 import (
@@ -45,13 +46,16 @@ func main() {
 		slog.Info("gateway auth enabled")
 	}
 
-	h := newHandlers(agentSocket)
+	store := newMetricsStore()
+	h := newHandlers(agentSocket, store)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("GET /version", h.version)
 	mux.HandleFunc("POST /chat", h.chat)
 	mux.HandleFunc("GET /tools", h.tools)
+	mux.HandleFunc("GET /metrics", h.metricsHandler)
+	mux.HandleFunc("GET /status", h.statusHandler)
 
 	rl := newRateLimiter(defaultRPS, defaultBurst)
 	sem := make(chan struct{}, maxConcurrent)
@@ -59,8 +63,8 @@ func main() {
 	// Middleware chain (outermost first):
 	// security headers -> auth -> rate limit -> concurrency cap -> handler
 	var handler http.Handler = mux
-	handler = concurrencyMiddleware(handler, sem)
-	handler = rateLimitMiddleware(handler, rl)
+	handler = concurrencyMiddleware(handler, sem, store)
+	handler = rateLimitMiddleware(handler, rl, store)
 	handler = bearerAuthMiddleware(handler, token)
 	handler = securityHeadersMiddleware(handler)
 

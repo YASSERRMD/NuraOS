@@ -89,13 +89,15 @@ func clientIP(r *http.Request) string {
 }
 
 // rateLimitMiddleware enforces per-IP request rate. /healthz is exempt.
-func rateLimitMiddleware(next http.Handler, rl *rateLimiter) http.Handler {
+// m may be nil; counter increments are no-ops on a nil MetricsStore.
+func rateLimitMiddleware(next http.Handler, rl *rateLimiter, m *MetricsStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
 			return
 		}
 		if !rl.allow(clientIP(r)) {
+			m.incRateLimited()
 			w.Header().Set("Retry-After", "1")
 			writeJSON(w, http.StatusTooManyRequests,
 				map[string]string{"error": "rate limit exceeded"})
@@ -107,7 +109,8 @@ func rateLimitMiddleware(next http.Handler, rl *rateLimiter) http.Handler {
 
 // concurrencyMiddleware caps concurrent non-health requests using a semaphore.
 // Requests that cannot acquire a slot immediately receive 429.
-func concurrencyMiddleware(next http.Handler, sem chan struct{}) http.Handler {
+// m may be nil; counter increments are no-ops on a nil MetricsStore.
+func concurrencyMiddleware(next http.Handler, sem chan struct{}, m *MetricsStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
@@ -117,6 +120,7 @@ func concurrencyMiddleware(next http.Handler, sem chan struct{}) http.Handler {
 		case sem <- struct{}{}:
 			defer func() { <-sem }()
 		default:
+			m.incConcurrencyBusy()
 			w.Header().Set("Retry-After", "1")
 			writeJSON(w, http.StatusTooManyRequests,
 				map[string]string{"error": "server busy"})
