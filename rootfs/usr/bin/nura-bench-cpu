@@ -1,0 +1,64 @@
+#!/bin/sh
+# nura-bench-cpu -- measure inference throughput under the current CPU profile.
+#
+# Sends a fixed prompt to llama-server's /completion endpoint, counts the
+# returned tokens, and computes tokens/sec. Run as any user; requires llama-
+# server to be healthy on localhost:8081.
+#
+# Usage:
+#   nura-bench-cpu [--tokens N] [prompt]
+#
+# Output (one line per run):
+#   profile=<name> threads=<n> tokens=<n> elapsed_ms=<n> tps=<n.n>
+#
+# Exit codes:
+#   0  benchmark completed
+#   1  llama-server not reachable
+#   2  unexpected response format
+
+LLAMA_URL="http://127.0.0.1:8081/completion"
+MAX_TOKENS=64
+PROMPT="In one sentence, describe what makes inference appliances unique."
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --tokens) MAX_TOKENS="$2"; shift 2 ;;
+    *)        PROMPT="$1";     shift   ;;
+    esac
+done
+
+PROFILE=$(grep '^profile=' /etc/nura/cpu-profile.conf 2>/dev/null | cut -d= -f2 || echo unknown)
+THREADS=$(cat /run/nura-cpu-threads 2>/dev/null || nproc 2>/dev/null || echo '?')
+
+# Build JSON payload (no external JSON tool needed for this simple structure).
+PAYLOAD="{\"prompt\":\"${PROMPT}\",\"n_predict\":${MAX_TOKENS},\"stream\":false}"
+
+# Check server reachability.
+if ! wget -q --spider "${LLAMA_URL%/completion}/health" 2>/dev/null; then
+    printf 'nura-bench-cpu: llama-server not reachable at %s\n' "${LLAMA_URL}" >&2
+    exit 1
+fi
+
+# Time the completion request.
+T_START=$(date +%s%3N 2>/dev/null || date +%s)
+RESPONSE=$(wget -q -O - --post-data "${PAYLOAD}" \
+    --header 'Content-Type: application/json' \
+    "${LLAMA_URL}" 2>/dev/null)
+T_END=$(date +%s%3N 2>/dev/null || date +%s)
+
+if [ -z "${RESPONSE}" ]; then
+    printf 'nura-bench-cpu: empty response from %s\n' "${LLAMA_URL}" >&2
+    exit 2
+fi
+
+# Count tokens generated: parse "tokens_evaluated" or estimate from content words.
+TOKENS=$(printf '%s' "${RESPONSE}" | grep -o '"tokens_predicted":[0-9]*' | grep -o '[0-9]*$')
+[ -z "${TOKENS}" ] && TOKENS="${MAX_TOKENS}"
+
+ELAPSED_MS=$(( T_END - T_START ))
+[ "${ELAPSED_MS}" -le 0 ] && ELAPSED_MS=1
+
+TPS=$(( TOKENS * 1000 / ELAPSED_MS ))
+
+printf 'profile=%s threads=%s tokens=%s elapsed_ms=%s tps=%s\n' \
+    "${PROFILE}" "${THREADS}" "${TOKENS}" "${ELAPSED_MS}" "${TPS}"

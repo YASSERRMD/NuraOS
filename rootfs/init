@@ -86,6 +86,16 @@ mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /var
 # FHS compat: /var/run is a symlink to /run.
 ln -sf /run /var/run
 
+# ----- CPU frequency profile -----
+# Apply the governor and compute inference thread count before any services
+# start. The thread count is written to /run/nura-cpu-threads where the
+# llama-server-wrapper reads it at launch time.
+if [ -x /sbin/nura-cpu-apply ]; then
+    log "$(nura-cpu-apply)"
+else
+    warn "nura-cpu-apply not found; using default CPU governor"
+fi
+
 # ----- Recovery mode -----
 if has_flag "nura.recovery=1"; then
     log "recovery flag set; dropping to emergency shell"

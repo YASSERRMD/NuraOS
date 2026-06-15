@@ -1,0 +1,57 @@
+#!/bin/sh
+# nura-cpu-apply -- apply CPU frequency governor and compute inference thread count.
+#
+# Reads /etc/nura/cpu-profile.conf, sets the cpufreq scaling governor on every
+# online CPU, and writes the aligned thread count to /run/nura-cpu-threads so
+# that llama-server-wrapper can pick it up without needing root at launch time.
+#
+# Profiles:
+#   performance  governor=performance  threads=nproc      (max throughput)
+#   balanced     governor=ondemand     threads=nproc/2    (power-efficient)
+#
+# If /sys/devices/system/cpu/.../cpufreq is absent (QEMU TCG, no KVM P-states)
+# the governor writes are silently skipped; thread count is still computed and
+# written so the wrapper always has a valid value.
+
+PROFILE_FILE=/etc/nura/cpu-profile.conf
+profile=performance
+[ -f "${PROFILE_FILE}" ] && . "${PROFILE_FILE}"
+
+# Count online CPUs (prefer nproc, fall back to /proc/cpuinfo count).
+NCPUS=$(nproc 2>/dev/null) || \
+    NCPUS=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null) || \
+    NCPUS=1
+[ "${NCPUS}" -ge 1 ] 2>/dev/null || NCPUS=1
+
+case "${profile}" in
+performance)
+    GOVERNOR=performance
+    THREADS="${NCPUS}"
+    ;;
+balanced)
+    GOVERNOR=ondemand
+    THREADS=$(( NCPUS > 1 ? NCPUS / 2 : 1 ))
+    ;;
+*)
+    # Unknown profile; default to balanced-safe values.
+    GOVERNOR=ondemand
+    THREADS="${NCPUS}"
+    ;;
+esac
+
+# Apply governor to all online CPUs that expose a cpufreq interface.
+APPLIED=0
+for gov_path in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
+    [ -f "${gov_path}" ] || continue
+    if printf '%s' "${GOVERNOR}" > "${gov_path}" 2>/dev/null; then
+        APPLIED=$(( APPLIED + 1 ))
+    fi
+done
+
+# Write thread count for consumption by llama-server-wrapper.
+mkdir -p /run
+printf '%s' "${THREADS}" > /run/nura-cpu-threads
+chmod 644 /run/nura-cpu-threads
+
+printf '[cpu-profile] profile=%s governor=%s threads=%d ncpus=%d cpus_updated=%d\n' \
+    "${profile}" "${GOVERNOR}" "${THREADS}" "${NCPUS}" "${APPLIED}"
