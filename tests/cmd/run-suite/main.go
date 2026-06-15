@@ -48,10 +48,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	rc, err := harness.NewRunContext(repoRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: creating run context: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("[run-suite] run_id=%s  commit=%s\n", rc.RunID, rc.CommitSHA[:min(8, len(rc.CommitSHA))])
+
 	reportDir := filepath.Join(repoRoot, "tests", "reports", suiteName)
+	bundleBase := filepath.Join(repoRoot, "tests", "reports")
 	ctx := context.Background()
 
-	run, exitCode := runSuite(ctx, suiteName, fn, repoRoot)
+	run, exitCode := runSuite(ctx, suiteName, fn, repoRoot, rc, bundleBase)
 
 	if err := reporters.WriteJUnit(reportDir, run); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing JUnit report: %v\n", err)
@@ -83,8 +91,8 @@ func availableSuites() []string {
 	return names
 }
 
-// runSuite boots QEMU, waits for readiness, runs fn, then shuts down.
-func runSuite(ctx context.Context, name string, fn SuiteFunc, repoRoot string) (harness.SuiteRun, int) {
+// runSuite boots QEMU, waits for readiness, runs fn, finalises results, then shuts down.
+func runSuite(ctx context.Context, name string, fn SuiteFunc, repoRoot string, rc *harness.RunContext, bundleBase string) (harness.SuiteRun, int) {
 	fmt.Printf("[run-suite] suite=%s  booting QEMU...\n", name)
 
 	opts := harness.QEMUOpts{
@@ -95,24 +103,26 @@ func runSuite(ctx context.Context, name string, fn SuiteFunc, repoRoot string) (
 
 	inst, err := harness.BootQEMU(ctx, opts)
 	if err != nil {
-		r := bootFailResult(name, fmt.Sprintf("QEMU boot failed: %v", err))
-		return harness.SuiteRun{Suite: name, Results: []harness.Result{r}}, 1
+		results := []harness.Result{bootFailResult(name, fmt.Sprintf("QEMU boot failed: %v", err))}
+		harness.FinaliseResults(ctx, rc, results, nil, bundleBase)
+		return harness.SuiteRun{Suite: name, Results: results}, 1
 	}
 	defer func() { _ = inst.Close() }()
 
 	fmt.Printf("[run-suite] QEMU running  api=127.0.0.1:%d  waiting for /healthz...\n", inst.APIPort)
 
 	if err := harness.WaitReady(ctx, inst, 120*time.Second); err != nil {
-		r := bootFailResult(name, fmt.Sprintf("guest not ready: %v", err))
-		r.Evidence = harness.Evidence{SerialLogPath: inst.SerialLogPath}
-		return harness.SuiteRun{Suite: name, Results: []harness.Result{r}}, 1
+		results := []harness.Result{bootFailResult(name, fmt.Sprintf("guest not ready: %v", err))}
+		harness.FinaliseResults(ctx, rc, results, inst, bundleBase)
+		return harness.SuiteRun{Suite: name, Results: results}, 1
 	}
 
 	fmt.Printf("[run-suite] guest ready  running cases...\n")
 
 	results := fn(ctx, inst)
-	run := harness.SuiteRun{Suite: name, Results: results}
+	harness.FinaliseResults(ctx, rc, results, inst, bundleBase)
 
+	run := harness.SuiteRun{Suite: name, Results: results}
 	exitCode := 0
 	for _, r := range results {
 		if r.Status == harness.StatusFail {
