@@ -16,6 +16,9 @@
 //	nuractl poweroff                # graceful shutdown then power off
 //	nuractl reboot                  # graceful shutdown then reboot
 //	nuractl events                  # tail system events from the event bus
+//	nuractl pkg install <file>      # install a .nupkg package
+//	nuractl pkg list                # list installed packages
+//	nuractl pkg remove  <name>      # remove an installed package
 //
 // Flags:
 //
@@ -35,6 +38,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/eventbus"
+	"github.com/yasserrmd/nuraos/services/internal/pkgmgr"
 )
 
 func main() {
@@ -106,6 +110,8 @@ func main() {
 		cmdDisable(client, rest[0], outputJSON)
 	case "reclaim":
 		cmdReclaim(outputJSON)
+	case "pkg":
+		cmdPkg(rest, outputJSON)
 	case "events":
 		cmdEvents(outputJSON)
 	case "poweroff":
@@ -262,6 +268,77 @@ func cmdShutdown(c *ctlsock.Client, asJSON bool, reboot bool) {
 	}
 }
 
+func cmdPkg(args []string, asJSON bool) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "nuractl pkg: subcommand required (install|list|remove)")
+		os.Exit(1)
+	}
+
+	pubKeyPath := os.Getenv("NURA_PKG_PUBKEY")
+	if pubKeyPath == "" {
+		pubKeyPath = pkgmgr.DefaultPubKeyPath
+	}
+	var opts pkgmgr.Options
+	opts.DBPath = os.Getenv("NURA_PKG_DB")
+	opts.OverlayDir = os.Getenv("NURA_PKG_OVERLAY")
+
+	switch args[0] {
+	case "install":
+		if len(args) < 2 {
+			fatalf("pkg install: package file required")
+		}
+		pub, err := pkgmgr.LoadPubKey(pubKeyPath)
+		if err != nil {
+			fatalf("pkg install: load public key from %s: %v", pubKeyPath, err)
+		}
+		opts.PubKey = pub
+		m, err := pkgmgr.Install(args[1], opts)
+		if err != nil {
+			fatalf("pkg install: %v", err)
+		}
+		if asJSON {
+			printJSON(map[string]string{"name": m.Name, "version": m.Version, "status": "installed"})
+			return
+		}
+		fmt.Printf("installed %s-%s\n", m.Name, m.Version)
+
+	case "list":
+		recs, err := pkgmgr.List(opts)
+		if err != nil {
+			fatalf("pkg list: %v", err)
+		}
+		if asJSON {
+			printJSON(recs)
+			return
+		}
+		if len(recs) == 0 {
+			fmt.Println("no packages installed")
+			return
+		}
+		fmt.Printf("%-24s  %-12s  %s\n", "NAME", "VERSION", "INSTALLED")
+		fmt.Println(strings.Repeat("-", 60))
+		for _, r := range recs {
+			fmt.Printf("%-24s  %-12s  %s\n", r.Name, r.Version, r.InstalledAt)
+		}
+
+	case "remove":
+		if len(args) < 2 {
+			fatalf("pkg remove: package name required")
+		}
+		if err := pkgmgr.Remove(args[1], opts); err != nil {
+			fatalf("pkg remove: %v", err)
+		}
+		if asJSON {
+			printJSON(map[string]string{"name": args[1], "status": "removed"})
+			return
+		}
+		fmt.Printf("removed %s\n", args[1])
+
+	default:
+		fatalf("pkg: unknown subcommand %q (install|list|remove)", args[0])
+	}
+}
+
 func cmdReclaim(asJSON bool) {
 	dataDir := os.Getenv("NURA_DATA_DIR")
 	if dataDir == "" {
@@ -328,6 +405,9 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  poweroff                  Graceful shutdown then power off")
 	fmt.Fprintln(os.Stderr, "  reboot                    Graceful shutdown then reboot")
 	fmt.Fprintln(os.Stderr, "  events                    Tail system events from the event bus")
+	fmt.Fprintln(os.Stderr, "  pkg install <file.nupkg>  Install a signed package")
+	fmt.Fprintln(os.Stderr, "  pkg list                  List installed packages")
+	fmt.Fprintln(os.Stderr, "  pkg remove  <name>        Remove an installed package")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json          JSON output")
