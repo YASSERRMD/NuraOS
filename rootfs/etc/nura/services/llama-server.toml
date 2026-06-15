@@ -35,3 +35,6 @@ mode    = "enforce"
 
 [landlock]
 profile = "/etc/nura/landlock/llama-server.toml"
+
+[capabilities]
+bounding_drop = ["all"]

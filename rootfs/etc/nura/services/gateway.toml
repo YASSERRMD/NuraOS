@@ -40,3 +40,6 @@ mode    = "enforce"
 
 [landlock]
 profile = "/etc/nura/landlock/gateway.toml"
+
+[capabilities]
+bounding_drop = ["all"]

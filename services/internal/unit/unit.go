@@ -82,6 +82,17 @@ type Landlock struct {
 	Profile string `toml:"profile"`
 }
 
+// Capabilities configures the Linux capability bounding set for this unit.
+// Bounding set restrictions are applied by the seccomp-exec trampoline before
+// exec'ing the service, so they apply to the entire su/sh/service chain.
+type Capabilities struct {
+	// BoundingDrop is the list of capabilities to remove from the bounding set.
+	// The special value "all" removes all capabilities except cap_setuid and
+	// cap_setgid, which are retained for the su privilege-drop chain.
+	// An empty list makes no change to the bounding set.
+	BoundingDrop []string `toml:"bounding_drop"`
+}
+
 // Namespaces configures which Linux namespaces to clone for this unit.
 // Defaults are all false (no namespace isolation beyond the inherited set).
 type Namespaces struct {
@@ -136,6 +147,8 @@ type Unit struct {
 	Seccomp Seccomp `toml:"seccomp"`
 	// Landlock configures per-service Landlock filesystem confinement.
 	Landlock Landlock `toml:"landlock"`
+	// Capabilities configures capability bounding set trimming for this unit.
+	Capabilities Capabilities `toml:"capabilities"`
 	// Enabled controls whether the unit participates in the start plan.
 	Enabled bool `toml:"enabled"`
 }
