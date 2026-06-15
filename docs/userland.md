@@ -70,4 +70,8 @@ recorded below after Phase 06 completes.
 | halt, poweroff | clean shutdown                     |
 | udhcpc      | DHCP client for network bringup       |
 
-BusyBox binary size: (recorded after Phase 06 build)
+BusyBox config: [rootfs/busybox.config](../rootfs/busybox.config)
+BusyBox binary size: (recorded after Phase 06 build; target below 1 MB)
+
+The binary is installed to `rootfs/staging/bin/busybox` by `fetch-busybox.sh`.
+The staging area is gitignored; run the fetch script on each fresh checkout.
