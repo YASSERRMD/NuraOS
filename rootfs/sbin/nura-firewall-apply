@@ -1,0 +1,86 @@
+#!/bin/sh
+# nura-firewall-apply -- apply NuraOS nftables firewall ruleset.
+#
+# Reads /etc/nura/firewall.conf, generates a ruleset with:
+#   inbound:  default-deny; allows loopback, established, ICMP, and the
+#             configured gateway port only.
+#   forward:  default-deny (appliance is not a router).
+#   outbound: default-deny; allows loopback, established, ICMP, DNS (53),
+#             DHCP (67), and any IPs listed in OUTBOUND_IPS/NTP_IP.
+#
+# If nft is not available the script logs a warning and exits 0 so that
+# boot continues. The kernel must have CONFIG_NF_TABLES=y for rules to apply.
+#
+# Offline mode: leave OUTBOUND_IPS and NTP_IP empty. DNS and DHCP are always
+# permitted so the initial network bringup succeeds; no further egress is needed.
+
+FIREWALL_CONF=/etc/nura/firewall.conf
+GATEWAY_PORT=8080
+OUTBOUND_IPS=""
+NTP_IP=""
+
+[ -f "${FIREWALL_CONF}" ] && . "${FIREWALL_CONF}"
+
+if ! command -v nft >/dev/null 2>&1; then
+    printf '[firewall] WARNING: nft not found; firewall rules NOT applied\n'
+    exit 0
+fi
+
+# Build outbound accept rules for configured provider IPs.
+build_outbound_rules() {
+    for ip in ${OUTBOUND_IPS}; do
+        printf '        ip daddr %s accept comment "provider"\n' "${ip}"
+    done
+    if [ -n "${NTP_IP}" ]; then
+        printf '        ip daddr %s udp dport 123 accept comment "NTP"\n' "${NTP_IP}"
+    fi
+}
+
+NFT_CONF=$(mktemp /tmp/nura-nft-XXXXXX.conf)
+
+cat > "${NFT_CONF}" << NFTEOF
+flush ruleset
+
+table inet nura {
+    chain inbound {
+        type filter hook input priority filter; policy drop;
+
+        iif lo accept                                               comment "loopback"
+        ct state established,related accept                         comment "established"
+        ip  protocol icmp      limit rate 10/second burst 5 packets accept comment "ICMPv4"
+        ip6 nexthdr  ipv6-icmp limit rate 10/second burst 5 packets accept comment "ICMPv6"
+        tcp dport ${GATEWAY_PORT} accept                            comment "gateway"
+        log prefix "nura-inbound-drop: "
+        drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+    }
+
+    chain outbound {
+        type filter hook output priority filter; policy drop;
+
+        oif lo accept                                               comment "loopback"
+        ct state established,related accept                         comment "established"
+        ip  protocol icmp      accept                               comment "ICMPv4"
+        ip6 nexthdr  ipv6-icmp accept                               comment "ICMPv6"
+        udp dport 53 accept                                         comment "DNS-UDP"
+        tcp dport 53 accept                                         comment "DNS-TCP"
+        udp dport 67 accept                                         comment "DHCP"
+$(build_outbound_rules)
+        log prefix "nura-outbound-drop: "
+        drop
+    }
+}
+NFTEOF
+
+if nft -f "${NFT_CONF}" 2>/dev/null; then
+    rm -f "${NFT_CONF}"
+    printf '[firewall] nftables ruleset applied (gateway_port=%s outbound_ips="%s")\n' \
+        "${GATEWAY_PORT}" "${OUTBOUND_IPS}"
+else
+    rm -f "${NFT_CONF}"
+    printf '[firewall] ERROR: nft -f failed; ruleset not applied\n' >&2
+    exit 1
+fi

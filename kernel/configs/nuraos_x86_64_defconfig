@@ -138,6 +138,21 @@ CONFIG_CGROUP_PIDS=y
 CONFIG_HW_RANDOM=y
 CONFIG_HW_RANDOM_VIRTIO=y
 
+# nftables: netfilter packet filtering for default-deny firewall (Phase 79).
+# NF_CONNTRACK tracks connection state (established/related accept rules).
+# NF_TABLES_INET applies rules to both IPv4 and IPv6 at once.
+CONFIG_NETFILTER=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_TABLES=y
+CONFIG_NF_TABLES_INET=y
+CONFIG_NFT_CT=y
+CONFIG_NFT_COUNTER=y
+CONFIG_NFT_LOG=y
+CONFIG_NFT_REJECT=y
+CONFIG_NFT_REJECT_INET=y
+CONFIG_NF_REJECT_IPV4=y
+CONFIG_NF_REJECT_IPV6=y
+
 # CPU frequency scaling for inference performance profiles (Phase 77).
 # performance governor: pins all CPUs at maximum frequency; lowest latency
 # for inference token generation at the cost of higher power draw.

@@ -117,6 +117,15 @@ ip link set eth0 up 2>/dev/null && \
 # Write a minimal resolv.conf if DHCP did not create one.
 [ -f /etc/resolv.conf ] || printf 'nameserver 10.0.2.3\nnameserver 8.8.8.8\n' > /etc/resolv.conf
 
+# ----- Firewall (nftables) -----
+# Applied after DHCP so the ruleset can allow the resolved DNS/gateway IPs.
+# Default-deny inbound (gateway port only) and allowlisted egress.
+if [ -x /sbin/nura-firewall-apply ]; then
+    log "$(nura-firewall-apply)"
+else
+    warn "nura-firewall-apply not found; system is UNPROTECTED"
+fi
+
 # ----- /data persistent partition -----
 # Determine the data block device.
 #
