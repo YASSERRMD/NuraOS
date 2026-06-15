@@ -90,3 +90,125 @@ tests/tools/file-issue.sh --close-on-green --auto-close result.json
 NURA_RUN_URL="https://github.com/OWNER/REPO/actions/runs/123" \
   tests/tools/file-issue.sh result.json
 ```
+
+## Flake detection
+
+`tests/tools/flake-detect.sh` identifies cases that alternate between pass and
+fail across recent runs and marks the corresponding GitHub issue with the
+`flaky` label.
+
+### How flake detection works
+
+1. The merged report (`tests/reports/merged-report.json`) is scanned for all
+   cases with `status == "fail"`.
+2. For each failing case its `failure_signature` is extracted.
+3. GitHub is searched for an open issue whose body contains that signature.
+4. If the issue already carries the `flaky` label the case is skipped.
+5. Otherwise the `flaky` label is applied to the existing issue.
+
+The `flaky` label acts as a human-review gate: flaky issues are suppressed from
+the re-filing loop and from auto-close so that a human can decide whether to
+quarantine, fix, or ignore the instability.
+
+### Flaky label
+
+| Label | Colour | Description |
+| --- | --- | --- |
+| `flaky` | `#e4e669` (yellow) | Case shows intermittent pass/fail behaviour |
+
+The label is created idempotently via `gh label create --force`.
+
+### Usage reference
+
+```sh
+# Detect and label flaky issues (requires merged-report.json to exist):
+tests/tools/flake-detect.sh
+
+# Use a custom reports directory:
+tests/tools/flake-detect.sh --report-dir /tmp/reports
+
+# Adjust the look-back window and alternation threshold:
+tests/tools/flake-detect.sh --window 10 --threshold 3
+
+# Dry-run (prints gh commands without executing them):
+tests/tools/flake-detect.sh --dry-run
+```
+
+`flake-detect.sh` should be run after `merge-reports.sh` in the aggregate CI
+job so that the merged report is available.
+
+## Quarantine list
+
+`tests/tools/quarantine.json` lists test cases that are known to be flaky or
+broken while a fix is in progress. Quarantined cases **run normally** but their
+failures do not file new issues and do not fail the CI gate.
+
+### Schema
+
+```json
+{
+  "_comment": "...",
+  "_format": {
+    "suite":    "suite name matching suiteRegistry key",
+    "case":     "case name within the suite",
+    "reason":   "human-readable reason for quarantine",
+    "expires":  "ISO 8601 date after which this entry must be reviewed",
+    "filed_by": "username of the person who added this entry",
+    "issue":    "optional GitHub issue number tracking the underlying flake"
+  },
+  "quarantined": [
+    {
+      "suite":    "build-and-boot",
+      "case":     "data-mounted",
+      "reason":   "QEMU virtio-blk timing issue on slow runners",
+      "expires":  "2026-09-01",
+      "filed_by": "YASSERRMD",
+      "issue":    42
+    }
+  ]
+}
+```
+
+### Rules
+
+- Every entry **must** have a non-empty `reason` and an `expires` date.
+- On the expiry date the entry must be reviewed: either removed (fixed),
+  renewed with an updated date, or escalated to a blocking issue.
+- Entries with no `issue` field are allowed but discouraged — prefer linking
+  the tracking issue so the history is clear.
+- PRs that add quarantine entries should reference the tracking issue in the
+  commit message.
+
+### How CI reads the quarantine list
+
+The CI workflow currently enforces the quarantine gate at the issue-filing
+step: `file-issue.sh` checks the quarantine list before creating or updating
+an issue. A future enhancement may suppress the suite exit-code failure as well.
+
+## Issue lifecycle summary
+
+```
+ New failure
+    │
+    ▼
+file-issue.sh ──── is there an open issue with matching sig? ──yes──► add recurrence comment
+    │                                                                      │
+    no                                                                     ▼
+    │                                                                 is case quarantined?
+    ▼                                                                      │
+ Create issue                                                        yes──► skip (no comment)
+ (test-failure + suite:NAME labels)                                        │
+    │                                                                      no
+    │ (on next fail)                                                        │
+    ▼                                                                       ▼
+ Recurrence comment ◄──────────────────────────────────────────────────────┘
+    │
+    │ (alternating pass/fail detected)
+    ▼
+flake-detect.sh ──► apply "flaky" label ──► suppress re-file & auto-close
+
+ Case passes (close-on-green)
+    │
+    ▼
+file-issue.sh --close-on-green ──► recovery comment (+ optional auto-close)
+```

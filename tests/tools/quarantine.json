@@ -1,0 +1,12 @@
+{
+  "_comment": "Quarantined test cases. Entries here run but do not file issues or fail the gate.",
+  "_format": {
+    "suite": "suite name matching suiteRegistry key",
+    "case": "case name within the suite",
+    "reason": "human-readable reason for quarantine",
+    "expires": "ISO 8601 date after which this entry must be reviewed and removed or renewed",
+    "filed_by": "username of the person who added this entry",
+    "issue": "optional: GitHub issue number tracking the underlying flake"
+  },
+  "quarantined": []
+}
