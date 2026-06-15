@@ -7,10 +7,19 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/agent"
 )
+
+// chatBufPool recycles 4 KiB read buffers across SSE proxy iterations.
+var chatBufPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 4096)
+		return &b
+	},
+}
 
 // maxChatBodyBytes caps the POST /chat request body to prevent oversized inputs.
 const maxChatBodyBytes = 64 * 1024
@@ -138,7 +147,9 @@ func (h *handlers) chat(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	flusher, canFlush := w.(http.Flusher)
-	buf := make([]byte, 4096)
+	bufp := chatBufPool.Get().(*[]byte)
+	buf := *bufp
+	defer chatBufPool.Put(bufp)
 	for {
 		nr, readErr := resp.Body.Read(buf)
 		if nr > 0 {
