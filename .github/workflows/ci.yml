@@ -123,6 +123,20 @@ jobs:
             -print0 | xargs -0 shellcheck -S warning -s sh
 
   # -----------------------------------------------------------------------
+  # Security: scan for hardcoded secrets and verify security posture.
+  # -----------------------------------------------------------------------
+  security:
+    name: Security check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run security-check.sh
+        run: |
+          chmod +x scripts/security-check.sh
+          ./scripts/security-check.sh
+
+  # -----------------------------------------------------------------------
   # Reproducibility: verify lockfiles and version pins are consistent.
   # -----------------------------------------------------------------------
   repro:
