@@ -20,10 +20,11 @@ echo "==> Building nura-gateway ${BUILD_VERSION} ..."
 
 mkdir -p "$(dirname "${OUTPUT}")"
 
+cd "${SERVICES_DIR}"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags "-s -w -X main.version=${BUILD_VERSION}" \
     -o "${OUTPUT}" \
-    "${SERVICES_DIR}/cmd/gateway"
+    "./cmd/gateway"
 
 echo "==> Installed: ${OUTPUT}"
 file "${OUTPUT}" 2>/dev/null || true
