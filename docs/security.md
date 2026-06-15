@@ -13,7 +13,7 @@ place, and guidance for safe LAN exposure.
 - Information leakage of provider API keys through logs or metrics.
 
 **Out of scope (not protected at this layer)**:
-- Physical access to the host machine.
+- Physical access to the host machine (mitigated by optional /data encryption).
 - A compromised QEMU host OS.
 - Traffic interception in transit (no TLS; see below).
 - A malicious model payload loaded from `/data/models/`.
@@ -214,6 +214,117 @@ The CI pipeline runs this check on every pull request (see `ci.yml`).
 | Path traversal in tools | `fs.read` rejects `..` components lexically |
 | Root process escape | nura-agent and gateway run as uid=1000 |
 | Hardcoded secrets | CI secrets-scan job on every PR |
+| Physical access to disk image | Optional LUKS2 encryption for /data (nura.data.luks=1) |
+| Lost key / no passphrase | Fail closed: no data mounted, emergency shell only |
+
+---
+
+## /data encryption at rest (optional)
+
+Encrypting the `/data` partition protects against an attacker who gains
+physical access to the QEMU disk image file. Without encryption, copying
+`data.img` off the host is sufficient to read secrets, session history, and
+model prompts.
+
+### Encryption model
+
+NuraOS uses **LUKS2** (Linux Unified Key Setup v2) with dm-crypt to provide
+full-volume encryption for `/data`. The default plain-text mode is unchanged;
+encryption is opt-in via a kernel cmdline flag.
+
+| Property | Value |
+|----------|-------|
+| Cipher | LUKS2 default (aes-xts-plain64, 256-bit key) |
+| KDF | argon2id (LUKS2 default; memory-hard) |
+| Key slots | up to 32; slot 0 = key file / passphrase, slot 1 = recovery passphrase |
+| Metadata overhead | 16 MiB LUKS2 header at front of image |
+
+### Enabling encryption
+
+On the host, before first boot:
+
+```sh
+# Format the data image with LUKS (passphrase prompted):
+sudo ./scripts/setup-luks.sh
+
+# Or generate a key file for automatic unlock:
+sudo ./scripts/setup-luks.sh --key-file key.bin
+```
+
+Then add `nura.data.luks=1` to the kernel cmdline. With `run-qemu.sh`, edit
+the `-append` line in the script:
+
+```sh
+-append "... nura.data.luks=1"
+```
+
+### Key source options and trade-offs
+
+| Source | How | Trade-off |
+|--------|-----|-----------|
+| **Key file on secondary block device** | Attach as a second virtio disk (`-drive file=key.bin,...`) | Automatic unlock; physical key device must be present at boot |
+| **Passphrase on serial console** | Typed on `/dev/console` at boot | No extra hardware; requires manual intervention at every boot |
+
+The two key sources are tried in order. If neither succeeds, the system fails
+closed (no `/data` mount, no services start, emergency shell).
+
+### What lives on the encrypted volume
+
+All NuraOS application data lives under `/data`. When encryption is enabled,
+the following are protected at rest:
+
+| Path | Sensitive content |
+|------|------------------|
+| `/data/etc/secrets.toml` | Provider API keys, gateway bearer token |
+| `/data/etc/agent.toml` | Agent configuration |
+| `/data/sessions/` | Full conversation history and tool call records |
+| `/data/journal/` | Structured log records (may contain user prompts) |
+| `/data/models/` | Model weights (not secrets, but may be licensed) |
+
+The initramfs and kernel are NOT encrypted. A determined attacker with host
+access can modify `/init` to bypass LUKS. Full measured boot (TPM attestation)
+is a future phase.
+
+### Graceful failure (fail closed)
+
+If the key is unavailable at boot:
+- `/data` is NOT mounted in plain text
+- No services start
+- `/init` logs a clear message and drops to an emergency shell:
+  ```
+  [init] LUKS: all key sources exhausted; /data partition locked
+  [init] LUKS: boot with nura.recovery=1 to access a recovery shell
+  [init] LUKS: failing closed -- no persistent data will be accessible
+  ```
+
+To recover: attach the correct key device and reboot, or enter the recovery
+passphrase when prompted.
+
+### Setup script reference
+
+```sh
+# Format (passphrase):
+sudo ./scripts/setup-luks.sh --image image/out/data.img
+
+# Format (key file, auto-unlock):
+sudo ./scripts/setup-luks.sh --key-file secrets/key.bin
+
+# Custom size:
+sudo ./scripts/setup-luks.sh --size 4096 --key-file secrets/key.bin
+```
+
+The script creates the ext4 filesystem inside the LUKS container and
+initialises the expected subdirectories (`models/`, `etc/`, etc.).
+
+### Key management guidance
+
+- Store the key file on a dedicated USB drive or in a password manager.
+- The key file is 4096 random bytes; losing it loses all `/data` content.
+- Always add a recovery passphrase slot (`cryptsetup luksAddKey`) as a backup.
+- Do NOT commit key files to git. Add `*.bin` and `secrets/` to `.gitignore`.
+- Rotate keys periodically: `cryptsetup luksChangeKey`.
+
+---
 
 ## Least-privilege model (Phase 41)
 

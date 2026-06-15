@@ -76,6 +76,64 @@ done
 
 DATA_MOUNT_OPTS="data=ordered,barrier=1,noatime"
 
+# ----- Optional LUKS encryption -----
+# Enable with kernel cmdline flag: nura.data.luks=1
+# Requires cryptsetup in the initramfs (install via scripts/build-initramfs.sh).
+if has_flag "nura.data.luks=1" && [ -n "${DATA_DEV}" ]; then
+    log "LUKS encryption requested for /data (${DATA_DEV})"
+
+    if ! command -v cryptsetup >/dev/null 2>&1; then
+        die "LUKS requested but cryptsetup not found in initramfs; rebuild with LUKS support"
+    fi
+
+    LUKS_OPENED=0
+
+    # Key source 1: 4096-byte key file from a secondary block device (/dev/vdb or /dev/sdb).
+    LUKS_KEYDEV=""
+    for _kdev in /dev/vdb /dev/sdb /dev/sdc; do
+        [ -b "${_kdev}" ] && LUKS_KEYDEV="${_kdev}" && break
+    done
+
+    if [ -n "${LUKS_KEYDEV}" ]; then
+        log "LUKS: trying key file from ${LUKS_KEYDEV} ..."
+        if cryptsetup luksOpen --key-file "${LUKS_KEYDEV}" \
+                --keyfile-size 4096 "${DATA_DEV}" nura-data 2>/dev/null; then
+            log "LUKS: opened with key file from ${LUKS_KEYDEV}"
+            LUKS_OPENED=1
+        else
+            warn "LUKS: key file on ${LUKS_KEYDEV} did not match"
+        fi
+    fi
+
+    # Key source 2: passphrase entered on the serial console.
+    if [ "${LUKS_OPENED}" -eq 0 ]; then
+        log "LUKS: no key device found; prompting for passphrase on console"
+        stty -echo 2>/dev/null
+        printf "NuraOS /data passphrase: " > /dev/console
+        read -r LUKS_PASS < /dev/console
+        stty echo 2>/dev/null
+        printf "\n" > /dev/console
+        if printf "%s" "${LUKS_PASS}" | \
+                cryptsetup luksOpen --key-file - "${DATA_DEV}" nura-data 2>/dev/null; then
+            log "LUKS: opened with passphrase"
+            LUKS_OPENED=1
+        else
+            warn "LUKS: passphrase did not match"
+        fi
+        unset LUKS_PASS
+    fi
+
+    if [ "${LUKS_OPENED}" -eq 0 ]; then
+        log "LUKS: all key sources exhausted; /data partition locked"
+        log "LUKS: boot with nura.recovery=1 to access a recovery shell"
+        log "LUKS: failing closed -- no persistent data will be accessible"
+        exec sh
+    fi
+
+    # Replace DATA_DEV with the unlocked mapper device for fsck and mount.
+    DATA_DEV=/dev/mapper/nura-data
+fi
+
 if [ -n "${DATA_DEV}" ]; then
     # Run fsck before mounting; bound it to 30 seconds.
     log "fsck ${DATA_DEV} ..."
