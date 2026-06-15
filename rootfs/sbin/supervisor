@@ -173,9 +173,11 @@ fi
 stage "stage2-nura-agent"
 if [ -x /sbin/nura-agent ]; then
     start_service nura_agent /sbin/nura-agent run &
-    wait_healthy nura-agent http://127.0.0.1:7070/healthz 30 || true
+    # Health endpoint arrives in Phase 28 (Go gateway). For now, wait briefly.
+    sleep 2
+    log "nura-agent started"
 else
-    log "nura-agent not installed yet (Phase 11+); dropping to shell for now"
+    log "nura-agent not installed yet; dropping to shell for now"
     stage "no-agent-shell"
     log "Type 'poweroff' or 'halt' to exit."
     exec sh
