@@ -26,6 +26,7 @@ type Writer struct {
 	mu      sync.Mutex
 	file    *os.File
 	today   string
+	limiter *FloodLimiter // optional; nil disables rate limiting
 }
 
 // NewWriter opens a Writer rooted at dir with the given total size cap.
@@ -40,6 +41,15 @@ func NewWriter(dir string, maxSize int64) (*Writer, error) {
 	return &Writer{dir: dir, maxSize: maxSize}, nil
 }
 
+// SetLimiter installs a FloodLimiter on the writer. If non-nil, Write calls
+// are subject to per-service rate limiting; dropped records return nil without
+// being written.
+func (w *Writer) SetLimiter(l *FloodLimiter) {
+	w.mu.Lock()
+	w.limiter = l
+	w.mu.Unlock()
+}
+
 // Write appends r to the current day file.
 func (w *Writer) Write(r Record) error {
 	line, err := r.MarshalNDJSON()
@@ -49,6 +59,10 @@ func (w *Writer) Write(r Record) error {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	if w.limiter != nil && !w.limiter.Allow(r.Service) {
+		return nil
+	}
 
 	if err := w.ensureFile(r.Time); err != nil {
 		return err

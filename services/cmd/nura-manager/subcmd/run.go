@@ -15,13 +15,35 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/unit"
 )
 
+// defaultLogRatePerSec is the per-service log flood cap. Services that emit
+// more than this many lines per second have the excess silently dropped.
+const defaultLogRatePerSec = 200
+
 // Run loads units from dir, resolves their order, and starts them in sequence
 // using the lifecycle Manager. A control socket is exposed for nuractl.
 // It blocks until SIGTERM/SIGINT, then performs ordered shutdown.
 func Run(dir string) error {
-	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	const journalDir = "/data/journal"
+
+	// Open journal first so the router can direct all log output there.
+	jw, jwErr := journal.NewWriter(journalDir, journal.DefaultMaxSize)
+	if jwErr != nil {
+		jw = nil
+	} else {
+		defer jw.Close()
+		limiter := journal.NewFloodLimiter(defaultLogRatePerSec)
+		jw.SetLimiter(limiter)
+		go journal.CollectKmsg("", jw)
+	}
+
+	// Severity-based routing: warnings+ to console, everything to journal.
+	log := slog.New(journal.NewRouter(jw, os.Stdout, "nura-manager"))
+
+	if jw != nil {
+		log.Info("journal started", "dir", journalDir)
+	} else {
+		log.Warn("journal init failed; service logs will go to stdout", "err", jwErr, "dir", journalDir)
+	}
 
 	units, err := unit.LoadDir(dir)
 	if err != nil {
@@ -39,17 +61,6 @@ func Run(dir string) error {
 
 	log.Info("nura-manager starting", "units", len(plan.Order))
 
-	const journalDir = "/data/journal"
-	jw, jwErr := journal.NewWriter(journalDir, journal.DefaultMaxSize)
-	if jwErr != nil {
-		log.Warn("journal init failed; service logs will go to stdout", "err", jwErr, "dir", journalDir)
-		jw = nil
-	} else {
-		defer jw.Close()
-		go journal.CollectKmsg("", jw)
-		log.Info("journal started", "dir", journalDir)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sigs := make(chan os.Signal, 1)
@@ -59,6 +70,16 @@ func Run(dir string) error {
 		log.Info("received signal", "signal", sig)
 		cancel()
 	}()
+
+	// Optional remote forwarding: set NURA_FORWARD_URL to enable.
+	if fwdURL := os.Getenv("NURA_FORWARD_URL"); fwdURL != "" && jw != nil {
+		fwd := journal.NewForwarder(journalDir, journal.ForwardConfig{
+			URL:         fwdURL,
+			MinPriority: journal.PriWarning,
+		})
+		go fwd.Run(ctx)
+		log.Info("log forwarding enabled", "url", fwdURL)
+	}
 
 	mgr := lifecycle.NewManager(log, jw)
 
