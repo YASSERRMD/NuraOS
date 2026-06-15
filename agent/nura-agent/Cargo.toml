@@ -11,6 +11,11 @@ path = "src/main.rs"
 [features]
 # Include Anthropic and OpenAI network providers. Disable for offline-only builds.
 remote-providers = []
+# Link llama.cpp directly via FFI instead of calling llama-server over HTTP.
+# Requires LLAMA_LIB_DIR to point to a compiled libllama.so at build time.
+# This feature is NOT enabled by default; the HTTP backend (LocalProvider) is
+# the recommended and tested path.
+llama-ffi = []
 
 [dependencies]
 nura-core = { path = "../nura-core" }
