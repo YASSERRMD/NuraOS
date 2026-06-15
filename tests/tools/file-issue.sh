@@ -96,3 +96,61 @@ if [[ -z "${SUITE}" || -z "${CASE}" || -z "${STATUS}" ]]; then
     echo "[file-issue] error: result JSON is missing required fields (suite, case, status)" >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# gh wrapper: respects DRY_RUN (also used by later commits)
+# ---------------------------------------------------------------------------
+gh_exec() {
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "[dry-run] gh $*" >&2
+        return 0
+    fi
+    gh "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Dedup search: find the first open issue whose body contains the stable
+# failure_signature marker <!-- nuraos-sig: SIG -->.
+# Returns the issue number on stdout, or empty string if none found.
+# ---------------------------------------------------------------------------
+find_open_issue_by_sig() {
+    local sig="$1"
+    if [[ -z "${sig}" ]]; then
+        echo ""
+        return
+    fi
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "[dry-run] gh issue list --search \"nuraos-sig: ${sig} in:body\" --state open ..." >&2
+        echo ""
+        return
+    fi
+    gh issue list \
+        --search "\"nuraos-sig: ${sig}\" in:body" \
+        --state open \
+        --json number \
+        --limit 5 \
+        2>/dev/null \
+        | jq -r '.[0].number // ""'
+}
+
+# ---------------------------------------------------------------------------
+# Title search: find an open issue by the standard title pattern.
+# Used by --close-on-green where no failure_signature exists in the result.
+# ---------------------------------------------------------------------------
+find_open_issue_by_title() {
+    local suite="$1"
+    local case_="$2"
+    local title="[${suite}] ${case_} failing"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "[dry-run] gh issue list --search \"${title} in:title\" --state open ..." >&2
+        echo ""
+        return
+    fi
+    gh issue list \
+        --search "\"${title}\" in:title" \
+        --state open \
+        --json number \
+        --limit 5 \
+        2>/dev/null \
+        | jq -r '.[0].number // ""'
+}
