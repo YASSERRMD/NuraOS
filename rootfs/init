@@ -96,41 +96,50 @@ else
     warn "nura-cpu-apply not found; using default CPU governor"
 fi
 
-# ----- Recovery mode -----
-if has_flag "nura.recovery=1"; then
-    log "recovery flag set; dropping to emergency shell"
-    log "exit the shell to continue the boot sequence"
-    exec sh
+# ----- Early (pre-data) recovery -----
+# nura.recovery=early drops to a minimal BusyBox shell immediately, before
+# network or /data are touched. Use when /data itself is unresponsive or when
+# the block device is inaccessible. For normal recovery tools (fsck, rollback,
+# factory-reset) use nura.recovery=1 instead.
+if has_flag "nura.recovery=early"; then
+    log "EARLY RECOVERY: dropping to minimal shell (no network, no /data mount)"
+    log "exit the shell to initiate a reboot"
+    sh
+    sync; reboot -f 2>/dev/null || halt -f 2>/dev/null || exec sh
 fi
 
-# ----- Network bringup -----
-log "bringing up loopback ..."
-ip link set lo up 2>/dev/null || warn "failed to bring up loopback"
+# ----- Network bringup (skipped in recovery mode) -----
+# Recovery mode deliberately does NOT start networking to limit attack surface
+# and prevent the agent from making outbound connections while the system may
+# be in an inconsistent state.
+if ! has_flag "nura.recovery=1"; then
+    log "bringing up loopback ..."
+    ip link set lo up 2>/dev/null || warn "failed to bring up loopback"
 
-log "bringing up eth0 (DHCP) ..."
-UDHCPC_SCRIPT=/etc/udhcpc/default.script
-ip link set eth0 up 2>/dev/null && \
-    udhcpc -i eth0 -q -n -t 5 \
-        ${UDHCPC_SCRIPT:+-s "${UDHCPC_SCRIPT}"} 2>/dev/null && \
-    log "eth0: DHCP OK" || warn "eth0 DHCP failed; continuing without network"
+    log "bringing up eth0 (DHCP) ..."
+    UDHCPC_SCRIPT=/etc/udhcpc/default.script
+    ip link set eth0 up 2>/dev/null && \
+        udhcpc -i eth0 -q -n -t 5 \
+            ${UDHCPC_SCRIPT:+-s "${UDHCPC_SCRIPT}"} 2>/dev/null && \
+        log "eth0: DHCP OK" || warn "eth0 DHCP failed; continuing without network"
 
-# Write a minimal resolv.conf if DHCP did not create one.
-# QEMU user-mode NAT provides a DNS forwarder at 10.0.2.3; 1.1.1.1 is the
-# secondary. On a private LAN, the DHCP-provided nameserver is preferred.
-if [ ! -f /etc/resolv.conf ] || [ ! -s /etc/resolv.conf ]; then
-    printf 'nameserver 10.0.2.3\nnameserver 1.1.1.1\n' > /etc/resolv.conf
-    log "DNS: wrote fallback resolv.conf (DHCP did not provide one)"
-fi
-# Log the active nameservers for diagnostics.
-log "DNS: nameservers: $(grep '^nameserver' /etc/resolv.conf | awk '{print $2}' | tr '\n' ' ')"
+    # Write a minimal resolv.conf if DHCP did not create one.
+    # QEMU user-mode NAT provides a DNS forwarder at 10.0.2.3; 1.1.1.1 is the
+    # secondary. On a private LAN, the DHCP-provided nameserver is preferred.
+    if [ ! -f /etc/resolv.conf ] || [ ! -s /etc/resolv.conf ]; then
+        printf 'nameserver 10.0.2.3\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+        log "DNS: wrote fallback resolv.conf (DHCP did not provide one)"
+    fi
+    log "DNS: nameservers: $(grep '^nameserver' /etc/resolv.conf | awk '{print $2}' | tr '\n' ' ')"
 
-# ----- Firewall (nftables) -----
-# Applied after DHCP so the ruleset can allow the resolved DNS/gateway IPs.
-# Default-deny inbound (gateway port only) and allowlisted egress.
-if [ -x /sbin/nura-firewall-apply ]; then
-    log "$(nura-firewall-apply)"
+    # ----- Firewall (nftables) -----
+    if [ -x /sbin/nura-firewall-apply ]; then
+        log "$(nura-firewall-apply)"
+    else
+        warn "nura-firewall-apply not found; system is UNPROTECTED"
+    fi
 else
-    warn "nura-firewall-apply not found; system is UNPROTECTED"
+    log "recovery mode: skipping network bringup and firewall"
 fi
 
 # ----- /data persistent partition -----
@@ -332,6 +341,23 @@ if [ -f "${BOOT_HASHES}" ]; then
 else
     log "integrity: no boot-hashes at ${BOOT_HASHES}; verification skipped"
     printf '{"result":"skipped","timestamp":"%s"}\n' "${_INOW}" > "${INTEGRITY_STATUS}"
+fi
+
+# ----- Full recovery console (nura.recovery=1) -----
+# Launched after /data is mounted so rollback, fsck, and factory-reset tools
+# have access to persistent state. Network is already skipped above.
+if has_flag "nura.recovery=1"; then
+    RECOVERY_CONSOLE=/sbin/nura-recovery
+    if [ -x "${RECOVERY_CONSOLE}" ]; then
+        log "recovery mode: launching recovery console"
+        "${RECOVERY_CONSOLE}"
+    else
+        log "recovery mode: ${RECOVERY_CONSOLE} not found; dropping to shell"
+        log "type 'exit' to reboot"
+        sh
+    fi
+    sync
+    reboot -f 2>/dev/null || halt -f 2>/dev/null || exec sh
 fi
 
 # ----- Least-privilege setup -----
