@@ -67,6 +67,7 @@ func main() {
 	mux.HandleFunc("GET /status", h.statusHandler)
 	mux.HandleFunc("GET /config", h.configHandler)
 	mux.HandleFunc("GET /models", h.modelsHandler)
+	mux.HandleFunc("GET /update/status", h.updateStatusHandler)
 
 	rl := newRateLimiter(defaultRPS, defaultBurst)
 	sem := make(chan struct{}, maxConcurrent)
