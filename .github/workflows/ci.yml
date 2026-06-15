@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Guard: reject any file that contains a Unicode em dash (U+2014).
+  # This keeps commit messages, code, and docs em-dash-free across the repo.
+  # -----------------------------------------------------------------------
+  em-dash-guard:
+    name: Em-dash guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject em dashes (U+2014)
+        run: |
+          set +e
+          hits=$(grep -rn $'—' \
+            --include="*.go" \
+            --include="*.rs" \
+            --include="*.sh" \
+            --include="*.md" \
+            --include="*.toml" \
+            --include="*.yaml" \
+            --include="*.yml" \
+            --include="*.json" \
+            . 2>/dev/null)
+          if [ -n "${hits}" ]; then
+            echo "ERROR: em dash (U+2014) found in the following files:"
+            echo "${hits}"
+            exit 1
+          fi
+          echo "OK: no em dashes found"
+
+  # -----------------------------------------------------------------------
+  # Rust: format check, clippy, and unit tests (locked).
+  # -----------------------------------------------------------------------
+  rust:
+    name: Rust (fmt / clippy / test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.87.0"
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Tests (locked)
+        run: cargo test --locked
+
+  # -----------------------------------------------------------------------
+  # Go: vet, staticcheck, and unit tests.
+  # -----------------------------------------------------------------------
+  go:
+    name: Go (vet / test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.4"
+          cache-dependency-path: services/go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Tests
+        run: go test -race -count=1 ./...
+
+  # -----------------------------------------------------------------------
+  # Shell: shellcheck on every script under scripts/ and rootfs/.
+  # -----------------------------------------------------------------------
+  shellcheck:
+    name: Shell (shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Shellcheck scripts/
+        run: |
+          find scripts/ -name "*.sh" -print0 | xargs -0 shellcheck -S warning
+
+      - name: Shellcheck rootfs/
+        run: |
+          find rootfs/ -type f \( -name "*.sh" -o -name "supervisor" -o -name "init" \) \
+            -print0 | xargs -0 shellcheck -S warning -s sh
+
+  # -----------------------------------------------------------------------
+  # Reproducibility: verify lockfiles and version pins are consistent.
+  # -----------------------------------------------------------------------
+  repro:
+    name: Reproducibility check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.87.0"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-meta-${{ hashFiles('agent/Cargo.lock') }}
+
+      - name: verify-repro.sh
+        run: ./scripts/verify-repro.sh
