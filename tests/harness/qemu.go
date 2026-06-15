@@ -42,6 +42,8 @@ type QEMUInstance struct {
 	MetricsPort int
 	// SerialLogPath is the path to the file capturing serial console output.
 	SerialLogPath string
+	// StderrLogPath is the path to the file capturing QEMU process stderr.
+	StderrLogPath string
 	// RepoRoot is the NuraOS repository root used to boot this instance.
 	RepoRoot string
 
@@ -104,7 +106,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// REPL commands programmatically.
 	args := []string{
 		"-machine", "q35,accel=kvm:tcg",
-		"-cpu", "qemu64",
+		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
@@ -182,6 +184,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		APIPort:       apiPort,
 		MetricsPort:   metricsPort,
 		SerialLogPath: serialLog,
+		StderrLogPath: qemuStderrPath,
 		RepoRoot:      opts.RepoRoot,
 		cmd:           cmd,
 		cancel:        cancel,

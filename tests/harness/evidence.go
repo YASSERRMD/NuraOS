@@ -36,6 +36,9 @@ func CaptureEvidence(ctx context.Context, inst *QEMUInstance, result *Result, bu
 		result.Evidence.JournalExcerpt = tailLines(serialDst, 100)
 	}
 
+	// QEMU stderr -- captures QEMU startup errors and KVM/TCG fallback messages.
+	captureFile(inst.StderrLogPath, filepath.Join(dir, "qemu-stderr.log"))
+
 	// Metrics snapshot.
 	if path := captureEndpoint(ctx, inst, "/metrics", filepath.Join(dir, "metrics.txt")); path != "" {
 		result.Evidence.MetricsSnapshot = path
@@ -77,6 +80,18 @@ func captureSerial(inst *QEMUInstance, dir string) string {
 		return ""
 	}
 	return dst
+}
+
+// captureFile copies src to dst verbatim (no redaction). Silently returns on error.
+func captureFile(src, dst string) {
+	if src == "" {
+		return
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(dst, data, 0o644)
 }
 
 // captureEndpoint GETs an endpoint on the guest, redacts the response, and
