@@ -63,12 +63,15 @@ cp "${BB_CONFIG}" "${SOURCE_DIR}/.config"
 
 # Build.
 log "building busybox (static musl) ..."
-make -C "${SOURCE_DIR}" \
+# BusyBox's vendored kconfig does not expose the 'olddefconfig' target that
+# the Linux kernel Makefile adds. Pipe yes "" so that every prompt for a new
+# symbol not present in our config gets its default value automatically.
+yes "" | make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \
     LDFLAGS="-static" \
     CONFIG_STATIC=y \
-    olddefconfig
+    oldconfig
 make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \
