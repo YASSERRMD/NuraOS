@@ -33,6 +33,13 @@ mount -t devtmpfs devtmpfs /dev || die "failed to mount /dev"
 [ -c /dev/zero ]    || mknod -m 666 /dev/zero c 1 5
 [ -c /dev/urandom ] || mknod -m 444 /dev/urandom c 1 9
 
+log "mounting cgroup2 on /sys/fs/cgroup ..."
+mkdir -p /sys/fs/cgroup
+mount -t cgroup2 -o nosuid,nodev,noexec none /sys/fs/cgroup 2>/dev/null || \
+    warn "cgroup2 mount failed; resource limits will be inactive"
+# Enable cpu, memory, and io controllers so the manager can set per-service limits.
+printf "+cpu +memory +io" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+
 log "mounting tmpfs on /tmp ..."
 mount -t tmpfs tmpfs /tmp
 

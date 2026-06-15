@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/sockact"
 	"github.com/yasserrmd/nuraos/services/internal/unit"
@@ -26,6 +27,7 @@ const StopTimeout = 15 * time.Second
 type Manager struct {
 	log      *slog.Logger
 	journal  *journal.Writer
+	cgMgr    *cgroup.Manager
 	mu       sync.Mutex
 	statuses map[string]*serviceStatus
 	procs    map[string]*serviceRun
@@ -34,13 +36,22 @@ type Manager struct {
 // NewManager creates a Manager with the given logger.
 // If journalWriter is non-nil, service stdout/stderr is captured to the journal.
 func NewManager(log *slog.Logger, journalWriter *journal.Writer) *Manager {
+	cgMgr := cgroup.NewManager()
+	if err := cgMgr.EnableControllers(); err != nil {
+		log.Warn("cgroup: controller enable failed (resource limits inactive)", "err", err)
+	}
 	return &Manager{
 		log:      log,
 		journal:  journalWriter,
+		cgMgr:    cgMgr,
 		statuses: make(map[string]*serviceStatus),
 		procs:    make(map[string]*serviceRun),
 	}
 }
+
+// CgroupManager returns the cgroup.Manager used by this lifecycle Manager.
+// Callers (e.g. the /metrics handler) can use it to read per-service stats.
+func (m *Manager) CgroupManager() *cgroup.Manager { return m.cgMgr }
 
 // Journal returns the writer in use, or nil if journaling is disabled.
 func (m *Manager) Journal() *journal.Writer { return m.journal }
@@ -360,6 +371,13 @@ func (m *Manager) restartLoop(ctx context.Context, u *unit.Unit, run *serviceRun
 	status := m.statuses[u.Name]
 	m.mu.Unlock()
 
+	// Create a cgroup for this service and apply resource limits.
+	if err := m.cgMgr.Create(u.Name, &u.Resources); err != nil {
+		m.log.Warn("cgroup: create failed", "name", u.Name, "err", err)
+	} else {
+		defer m.cgMgr.Delete(u.Name)
+	}
+
 	policy := u.Restart.Policy
 	backoff := time.Duration(u.Restart.BackoffInit) * time.Second
 	backoffMax := time.Duration(u.Restart.BackoffMax) * time.Second
@@ -389,6 +407,13 @@ func (m *Manager) restartLoop(ctx context.Context, u *unit.Unit, run *serviceRun
 			status.pid = cmd.Process.Pid
 			status.mu.Unlock()
 			m.log.Info("unit launched", "name", u.Name, "pid", cmd.Process.Pid)
+
+			// Place the process in its cgroup and start OOM monitoring.
+			if err := m.cgMgr.AddPid(u.Name, cmd.Process.Pid); err != nil {
+				m.log.Warn("cgroup: add pid failed", "name", u.Name, "err", err)
+			} else {
+				go m.cgMgr.WatchOOM(ctx, u.Name, m.log, m.journal)
+			}
 
 			// Wait for readiness signal (notify type).
 			if readyCh != nil {

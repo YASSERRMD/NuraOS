@@ -119,6 +119,19 @@ CONFIG_PID_NS=y
 CONFIG_NET_NS=y
 CONFIG_USER_NS=n
 
+# Cgroup v2 (unified hierarchy) for per-service resource control (Phase 71).
+# The manager places each service in a slice cgroup with cpu/memory/io limits.
+CONFIG_CGROUPS=y
+CONFIG_CGROUP_SCHED=y
+CONFIG_FAIR_GROUP_SCHED=y
+CONFIG_CFS_BANDWIDTH=y
+CONFIG_CGROUP_CPUACCT=y
+CONFIG_CGROUP_FREEZER=y
+CONFIG_MEMCG=y
+CONFIG_MEMCG_SWAP=n
+CONFIG_BLKCG=y
+CONFIG_CGROUP_PIDS=y
+
 # Panic on data corruption detected by the kernel.
 CONFIG_BUG_ON_DATA_CORRUPTION=y
 

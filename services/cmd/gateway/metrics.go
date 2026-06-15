@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/agent"
+	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 )
 
@@ -93,9 +94,9 @@ func (m *MetricsStore) uptimeSeconds() int64 {
 // WriteTo writes Prometheus text exposition (version 0.0.4) to w.
 // agentMet may be nil when the agent is unreachable; those metric families are
 // omitted rather than emitted with stale zeros. disk may be nil when the
-// monitor has not yet polled or is unconfigured. A nil receiver emits only a
-// comment line so callers need not nil-check.
-func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics, disk *diskmon.Usage) {
+// monitor has not yet polled or is unconfigured. cgStats may be nil when
+// cgroup metrics are unavailable. A nil receiver emits only a comment line.
+func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics, disk *diskmon.Usage, cgStats map[string]*cgroup.Stats) {
 	if m == nil {
 		fmt.Fprintf(w, "# metrics unavailable\n")
 		return
@@ -151,6 +152,40 @@ func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics, disk *
 		fmt.Fprintf(w, "# HELP nura_disk_used_percent Percentage of /data filesystem in use (0-100).\n")
 		fmt.Fprintf(w, "# TYPE nura_disk_used_percent gauge\n")
 		fmt.Fprintf(w, "nura_disk_used_percent %.2f\n", disk.UsedPct)
+	}
+
+	if len(cgStats) > 0 {
+		fmt.Fprintf(w, "# HELP nura_cgroup_cpu_usage_seconds_total Total CPU time consumed by a service cgroup.\n")
+		fmt.Fprintf(w, "# TYPE nura_cgroup_cpu_usage_seconds_total counter\n")
+		for svc, s := range cgStats {
+			if s != nil {
+				fmt.Fprintf(w, "nura_cgroup_cpu_usage_seconds_total{service=%q} %.6f\n", svc, float64(s.CPUUsageUsec)/1e6)
+			}
+		}
+
+		fmt.Fprintf(w, "# HELP nura_cgroup_memory_bytes Current memory usage of a service cgroup in bytes.\n")
+		fmt.Fprintf(w, "# TYPE nura_cgroup_memory_bytes gauge\n")
+		for svc, s := range cgStats {
+			if s != nil {
+				fmt.Fprintf(w, "nura_cgroup_memory_bytes{service=%q} %d\n", svc, s.MemoryCurrent)
+			}
+		}
+
+		fmt.Fprintf(w, "# HELP nura_cgroup_memory_max_bytes Configured memory hard limit of a service cgroup (0 = unlimited).\n")
+		fmt.Fprintf(w, "# TYPE nura_cgroup_memory_max_bytes gauge\n")
+		for svc, s := range cgStats {
+			if s != nil {
+				fmt.Fprintf(w, "nura_cgroup_memory_max_bytes{service=%q} %d\n", svc, s.MemoryMax)
+			}
+		}
+
+		fmt.Fprintf(w, "# HELP nura_cgroup_oom_kills_total Total OOM kills in a service cgroup.\n")
+		fmt.Fprintf(w, "# TYPE nura_cgroup_oom_kills_total counter\n")
+		for svc, s := range cgStats {
+			if s != nil {
+				fmt.Fprintf(w, "nura_cgroup_oom_kills_total{service=%q} %d\n", svc, s.OOMKills)
+			}
+		}
 	}
 
 	if agentMet == nil {
