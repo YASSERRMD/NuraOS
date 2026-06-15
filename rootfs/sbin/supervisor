@@ -4,7 +4,11 @@
 # Responsibilities:
 #  - Start services in declared order with health checks between stages.
 #  - Monitor services and restart them on crash with capped exponential backoff.
-#  - Forward SIGTERM to all children for clean shutdown.
+#  - Crash-loop breaker: if a service crashes CRASH_LOOP_LIMIT times within
+#    CRASH_LOOP_WINDOW seconds, suspend it for CRASH_LOOP_BACKOFF seconds.
+#  - Watchdog: periodically probe each service health endpoint; kill and let
+#    start_service restart any that stop responding.
+#  - Forward SIGTERM to all children for clean shutdown; force-kill survivors.
 #  - Reap zombie children (BusyBox sh at PID 1 calls waitpid implicitly).
 #  - Log structured boot stages to console and /data/logs/boot.log.
 #  - Recovery mode: nura.recovery=1 on cmdline bypasses service start.
@@ -12,10 +16,16 @@
 LOG_FILE=/data/logs/boot.log
 STAGE_FILE=/tmp/supervisor.stage
 
-# BusyBox init/supervisor max restart attempts per service.
 MAX_RESTARTS=5
-RESTART_DELAY_INIT=1   # seconds; doubled each retry up to 30
+RESTART_DELAY_INIT=1
 RESTART_DELAY_MAX=30
+
+CRASH_LOOP_LIMIT=5
+CRASH_LOOP_WINDOW=60
+CRASH_LOOP_BACKOFF=120
+
+WATCHDOG_INTERVAL=30
+WATCHDOG_TIMEOUT=5
 
 log() {
     TS=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
@@ -35,19 +45,14 @@ die() {
     exec sh
 }
 
-# Read kernel cmdline for flags.
 read -r CMDLINE < /proc/cmdline 2>/dev/null || CMDLINE=""
 has_flag() { echo "${CMDLINE}" | grep -qw "$1"; }
 
-# Ensure log directory exists.
 mkdir -p /data/logs 2>/dev/null || true
-
-# Clean up previous stage file.
 rm -f "${STAGE_FILE}" 2>/dev/null || true
 
 log "supervisor starting (PID $$)"
 
-# ----- Signal handling -----
 SHUTDOWN=0
 
 cleanup() {
@@ -55,18 +60,17 @@ cleanup() {
     log "SIGTERM received; shutting down services"
     stage "shutdown"
 
-    # Send SIGTERM to all managed PIDs.
     for name in llama_server nura_agent gateway; do
         eval "pid=\${${name}_pid:-}"
         if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-            log "stopping ${name} (PID ${pid})"
+            log "sending SIGTERM to ${name} (PID ${pid})"
             kill -TERM "${pid}" 2>/dev/null || true
         fi
     done
 
-    # Give services up to 5 seconds to exit.
+    # Wait up to 15 s for services to drain and exit cleanly.
     i=0
-    while [ "${i}" -lt 5 ]; do
+    while [ "${i}" -lt 15 ]; do
         all_gone=1
         for name in llama_server nura_agent gateway; do
             eval "pid=\${${name}_pid:-}"
@@ -80,6 +84,15 @@ cleanup() {
         i=$((i + 1))
     done
 
+    # Force-kill any survivors.
+    for name in llama_server nura_agent gateway; do
+        eval "pid=\${${name}_pid:-}"
+        if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+            log "force-killing ${name} (PID ${pid}) after drain timeout"
+            kill -KILL "${pid}" 2>/dev/null || true
+        fi
+    done
+
     log "flushing logs and halting"
     sync
     halt -f 2>/dev/null || poweroff -f 2>/dev/null || true
@@ -87,7 +100,6 @@ cleanup() {
 
 trap cleanup TERM INT
 
-# ----- Recovery mode -----
 if has_flag "nura.recovery=1"; then
     log "recovery mode: skipping service start"
     stage "recovery"
@@ -95,13 +107,8 @@ if has_flag "nura.recovery=1"; then
     exec sh
 fi
 
-# ----- Helper: wait for an HTTP healthcheck -----
 wait_healthy() {
-    local name="$1"
-    local url="$2"
-    local timeout="${3:-30}"
-    local elapsed=0
-
+    local name="$1" url="$2" timeout="${3:-30}" elapsed=0
     log "waiting for ${name} health at ${url} (timeout ${timeout}s) ..."
     while [ "${elapsed}" -lt "${timeout}" ]; do
         if wget -q -O /dev/null "${url}" 2>/dev/null; then
@@ -115,12 +122,8 @@ wait_healthy() {
     return 1
 }
 
-# ----- Helper: wait for the agent Unix socket to appear -----
 wait_agent_socket() {
-    local path="$1"
-    local timeout="${2:-30}"
-    local elapsed=0
-
+    local path="$1" timeout="${2:-30}" elapsed=0
     log "waiting for agent socket ${path} (timeout ${timeout}s) ..."
     while [ "${elapsed}" -lt "${timeout}" ]; do
         if grep -q "${path}" /proc/net/unix 2>/dev/null; then
@@ -134,13 +137,20 @@ wait_agent_socket() {
     return 1
 }
 
-# ----- Helper: start a service with restart logic -----
+probe_ok() {
+    wget -q -O /dev/null -T "${WATCHDOG_TIMEOUT}" "$1" 2>/dev/null
+}
+
+# Start a service in a restart loop with exponential backoff and crash-loop
+# detection. Runs in a background subshell; the caller & the PID.
 start_service() {
     local name="$1"
     shift
     local cmd="$*"
     local restarts=0
     local delay="${RESTART_DELAY_INIT}"
+    local crash_times_file="/tmp/supervisor_crashes_${name}"
+    : > "${crash_times_file}"
 
     while [ "${SHUTDOWN}" -eq 0 ]; do
         log "starting ${name}: ${cmd}"
@@ -149,40 +159,68 @@ start_service() {
         eval "${name}_pid=${pid}"
         log "${name} started (PID ${pid})"
 
-        # Wait for the process to exit.
         wait "${pid}" 2>/dev/null
         exit_code=$?
-
         [ "${SHUTDOWN}" -eq 1 ] && return 0
 
+        now=$(date +%s 2>/dev/null || echo 0)
+        echo "${now}" >> "${crash_times_file}"
         log "${name} exited (code ${exit_code})"
-        restarts=$((restarts + 1))
 
-        if [ "${restarts}" -ge "${MAX_RESTARTS}" ]; then
-            log "WARNING: ${name} has crashed ${restarts} times; backing off"
-            sleep "${RESTART_DELAY_MAX}"
+        # Crash-loop breaker.
+        window_start=$((now - CRASH_LOOP_WINDOW))
+        recent=$(awk -v t="${window_start}" '$1 >= t' "${crash_times_file}" 2>/dev/null | wc -l)
+        if [ "${recent}" -ge "${CRASH_LOOP_LIMIT}" ]; then
+            log "WARN: ${name} crash-loop detected (${recent} crashes in ${CRASH_LOOP_WINDOW}s)"
+            log "WARN: suspending ${name} for ${CRASH_LOOP_BACKOFF}s before retry"
+            sleep "${CRASH_LOOP_BACKOFF}"
+            : > "${crash_times_file}"
             restarts=0
             delay="${RESTART_DELAY_INIT}"
             continue
         fi
 
-        log "restarting ${name} in ${delay}s (attempt ${restarts}/${MAX_RESTARTS}) ..."
+        restarts=$((restarts + 1))
+        if [ "${restarts}" -ge "${MAX_RESTARTS}" ]; then
+            restarts=0
+            delay="${RESTART_DELAY_INIT}"
+        fi
+
+        log "restarting ${name} in ${delay}s ..."
         sleep "${delay}"
         delay=$((delay * 2))
         [ "${delay}" -gt "${RESTART_DELAY_MAX}" ] && delay="${RESTART_DELAY_MAX}"
     done
 }
 
-# Service PIDs (set by start_service).
+# Watchdog: probe services periodically; kill (to trigger restart) if hung.
+watchdog_loop() {
+    while [ "${SHUTDOWN}" -eq 0 ]; do
+        sleep "${WATCHDOG_INTERVAL}"
+        [ "${SHUTDOWN}" -eq 1 ] && return
+        if [ -n "${llama_server_pid:-}" ] && kill -0 "${llama_server_pid}" 2>/dev/null; then
+            if ! probe_ok http://127.0.0.1:8081/health; then
+                log "WATCHDOG: llama-server unresponsive; killing for restart"
+                kill -KILL "${llama_server_pid}" 2>/dev/null || true
+            fi
+        fi
+        if [ -n "${gateway_pid:-}" ] && kill -0 "${gateway_pid}" 2>/dev/null; then
+            if ! probe_ok http://127.0.0.1:8080/healthz; then
+                log "WATCHDOG: gateway unresponsive; killing for restart"
+                kill -KILL "${gateway_pid}" 2>/dev/null || true
+            fi
+        fi
+    done
+}
+
 llama_server_pid=""
 nura_agent_pid=""
 gateway_pid=""
 
-# ----- Boot stages -----
+# Boot stages.
 
 stage "stage1-llama-server"
 if [ -x /sbin/llama-server ]; then
-    # Read model path and context length from /data/model.json if present.
     MODEL_PATH=""
     CTX_SIZE=2048
     if [ -f /data/model.json ]; then
@@ -209,7 +247,6 @@ fi
 stage "stage2-nura-agent"
 if [ -x /sbin/nura-agent ]; then
     start_service nura_agent /sbin/nura-agent run &
-    # Health endpoint arrives in Phase 28 (Go gateway). For now, wait briefly.
     sleep 2
     log "nura-agent started"
 else
@@ -227,13 +264,13 @@ else
     log "gateway not installed yet (Phase 28+); skipping"
 fi
 
-stage "running"
-log "all services started; supervisor monitoring"
+watchdog_loop &
+watchdog_pid=$!
 
-# Main loop: reap zombies and wait for shutdown.
+stage "running"
+log "all services started; supervisor monitoring (watchdog PID ${watchdog_pid})"
+
 while [ "${SHUTDOWN}" -eq 0 ]; do
-    # wait -n would be ideal but is not available in all BusyBox sh versions.
-    # Use a short sleep; zombie reaping happens automatically in BusyBox sh PID 1.
     sleep 5
 done
 
