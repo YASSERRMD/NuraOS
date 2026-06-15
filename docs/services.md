@@ -1,16 +1,109 @@
-# NuraOS Service Topology
+# NuraOS Service Model
 
-NuraOS runs three services inside the QEMU guest, managed by `/sbin/supervisor`
-(PID 1 after `/sbin/init` exec's it). Each service starts in a declared stage;
-later stages wait for earlier ones to be healthy before proceeding.
+NuraOS uses a declarative service manager (`nura-manager`) that reads TOML
+unit files from `/etc/nura/services/`, resolves dependency order, and starts
+services with readiness gating.
 
-## Boot stages
+The shell supervisor at `/sbin/supervisor` is now a thin PID-1 wrapper that
+delegates to `nura-manager`. It handles early boot, recovery mode, and provides
+a legacy fallback path.
 
+---
+
+## Unit file format
+
+Each service is a TOML file under `/etc/nura/services/<name>.toml`.
+
+```toml
+name        = "gateway"
+description = "NuraOS HTTP gateway"
+exec        = "/sbin/gateway"
+args        = []              # optional extra arguments
+type        = "longrun"       # oneshot | longrun | notify
+user        = "nura"          # UNIX account; default root
+after       = ["nura-agent"]  # ordering dependency (start after, no gate)
+requires    = ["nura-agent"]  # hard dependency (wait for readiness)
+enabled     = true
+
+[restart]
+policy             = "on-failure"  # no | on-failure | always
+max_restarts       = 5
+backoff_initial    = 1             # seconds
+backoff_max        = 30
+crash_loop_limit   = 5
+crash_loop_window  = 60
+crash_loop_backoff = 120
+
+[resources]
+cpu_weight = 100
+memory_max = "128M"  # enforced in Phase 71 (cgroups)
+io_weight  = 100
+
+[readiness]
+type    = "http"               # http | socket | none
+url     = "http://127.0.0.1:8080/healthz"
+socket  = ""
+timeout = 30                   # seconds before continuing anyway
 ```
-stage1-llama-server   llama-server (port 8081, loopback only)
-stage2-nura-agent     nura-agent (Unix socket /run/nura-agent.sock)
-stage3-gateway        nura-gateway (TCP port 8080, loopback by default)
+
+### Field reference
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | Unique service identifier |
+| `description` | string | no | Human-readable label |
+| `exec` | string | yes | Absolute path to executable |
+| `args` | []string | no | Extra arguments appended to exec |
+| `type` | enum | no | `longrun` (default), `oneshot`, or `notify` |
+| `user` | string | no | Drop to this UNIX account after launch |
+| `after` | []string | no | Ordering constraint: start after these units |
+| `requires` | []string | no | Hard dependency: wait for readiness before starting dependants |
+| `enabled` | bool | no | `true` to include in the start plan (default false) |
+
+### Restart policy
+
+| Policy | Meaning |
+|---|---|
+| `no` | Never restart |
+| `on-failure` | Restart only on non-zero exit |
+| `always` | Restart unconditionally |
+
+Crash-loop breaker: if the service crashes `crash_loop_limit` times within
+`crash_loop_window` seconds, it is paused for `crash_loop_backoff` seconds
+before retrying.
+
+### Readiness probe types
+
+| Type | Mechanism |
+|---|---|
+| `none` | No probe; dependants start immediately after process launch |
+| `http` | HTTP GET to `url`; success = status < 500 |
+| `socket` | Unix domain socket at `socket` path; success = connect OK |
+
+---
+
+## Dependency resolution
+
+The service manager runs Kahn's topological sort over all enabled units. The
+computed start order is stable and deterministic for a given set of units.
+
+- `after` adds a graph edge (ordering only; no readiness gate).
+- `requires` adds the same edge AND gates dependants behind the readiness probe.
+- Cycles are detected and reported as errors; the manager refuses to start.
+
+Print the computed plan without starting anything:
+
+```sh
+nura-manager dry-run
 ```
+
+Validate unit files:
+
+```sh
+nura-manager check
+```
+
+---
 
 ## Services
 
@@ -18,34 +111,35 @@ stage3-gateway        nura-gateway (TCP port 8080, loopback by default)
 
 | Item | Value |
 |---|---|
+| Unit file | `/etc/nura/services/llama-server.toml` |
 | Binary | `/sbin/llama-server` |
+| User | `root` |
 | Listen | `127.0.0.1:8081` (HTTP) |
-| Health | `GET http://127.0.0.1:8081/health` |
-| Config | `/data/model.json` (path + context_length) |
+| Readiness | `GET http://127.0.0.1:8081/health` (timeout 120 s) |
 
-llama.cpp inference server. The supervisor waits up to 120 s for the health
-endpoint before starting nura-agent. If no model is found under `/data/models/`
-the stage is skipped gracefully.
+llama.cpp inference server. The manager waits up to 120 s for the health
+endpoint before starting nura-agent.
 
 ### nura-agent
 
 | Item | Value |
 |---|---|
+| Unit file | `/etc/nura/services/nura-agent.toml` |
 | Binary | `/sbin/nura-agent` |
 | User | `nura` (uid=1000) |
 | IPC | Unix domain socket `/run/nura-agent.sock` |
-| Protocol | JSON-over-HTTP (plain HTTP/1.1 on the socket) |
+| Requires | `llama-server` |
+| Readiness | socket probe on `/run/nura-agent.sock` (timeout 30 s) |
 
 The Rust agent implements the AI turn loop. It binds the Unix socket before
-accepting requests. The supervisor polls `/proc/net/unix` for the socket path
-(30 s timeout) before allowing the gateway to start.
+accepting requests.
 
-Agent endpoints on the socket:
+Agent socket endpoints:
 
 | Method | Path | Description |
 |---|---|---|
 | GET | /health | `{"status":"ok","provider":"...","uptime_seconds":N}` |
-| POST | /turns | Stream a conversation turn (SSE); body is TurnRequest |
+| POST | /turns | Stream a conversation turn (SSE) |
 | GET | /tools | List registered tools |
 | GET | /metrics | Agent operational counters (JSON) |
 
@@ -53,27 +147,27 @@ Agent endpoints on the socket:
 
 | Item | Value |
 |---|---|
+| Unit file | `/etc/nura/services/gateway.toml` |
 | Binary | `/sbin/gateway` |
 | User | `nura` (uid=1000) |
 | Listen | `127.0.0.1:8080` default; `0.0.0.0:8080` with `GATEWAY_BIND_LAN=1` |
-| Auth | Bearer token (optional; set `gateway_token` in secrets.toml) |
-| Build | `scripts/build-gateway.sh` (static, `CGO_ENABLED=0`) |
+| Requires | `nura-agent` |
+| Readiness | `GET http://127.0.0.1:8080/healthz` (timeout 30 s) |
 
 The Go HTTP gateway translates external HTTP requests into IPC calls on the
-agent socket. All endpoints (except `/healthz`) are protected by bearer auth
-when a token is configured.
+agent socket.
 
 **Gateway HTTP endpoints:**
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | /healthz | Exempt | Agent reachability and status; 200 ok or 503 degraded |
+| GET | /healthz | Exempt | Agent reachability; 200 ok or 503 degraded |
 | GET | /version | Required | `{"service":"nura-gateway","version":"..."}` |
-| POST | /chat | Required | Chat turn (SSE); body `{"messages":[...],"provider":"..."}` |
-| GET | /tools | Required | List tools from the agent |
-| GET | /metrics | Required | Prometheus text with gateway and agent counters |
-| GET | /status | Required | Human-readable JSON health summary across all components |
-| GET | /config | Required | Effective gateway configuration (no secrets) |
+| POST | /chat | Required | Chat turn (SSE) |
+| GET | /tools | Required | Tool list from the agent |
+| GET | /metrics | Required | Prometheus text |
+| GET | /status | Required | Health summary JSON |
+| GET | /config | Required | Effective gateway configuration |
 
 **Middleware stack (outer to inner):**
 
@@ -85,21 +179,40 @@ concurrencyMiddleware      -- 429 when 4+ concurrent non-health requests
 mux                        -- route to handler
 ```
 
-**POST /chat body:**
+---
 
-```json
-{
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ],
-  "max_tokens": 1024,
-  "temperature": 0.7,
-  "provider": "local"
-}
+## Service lifecycle
+
+The manager tracks each unit through the following states:
+
+```
+inactive -> starting -> ready -> running -> stopping -> failed
 ```
 
-`provider` overrides the configured default for this turn only.
-Valid values: `local`, `anthropic`, `openai`.
+| State | Meaning |
+|---|---|
+| `inactive` | Not yet started |
+| `starting` | Process launched, readiness probe pending |
+| `ready` | Readiness probe passed; dependants may start |
+| `running` | Process live, no active probe |
+| `stopping` | SIGTERM sent, drain period active |
+| `failed` | Exited non-zero and restart policy is `no` |
+
+Detailed lifecycle transitions, notify protocol, and ordered shutdown are
+implemented in Phase 57.
+
+---
+
+## Build
+
+```sh
+scripts/build-manager.sh     # builds rootfs/staging/sbin/nura-manager
+scripts/build-initramfs.sh   # includes nura-manager and unit files in initramfs
+```
+
+The manager binary is built as a fully static Go binary (`CGO_ENABLED=0`).
+
+---
 
 ## QEMU port forwarding
 
@@ -110,32 +223,19 @@ qemu-system-x86_64 \
   ...
 ```
 
-Gateway is then reachable on the host at `http://localhost:18080`.
+Gateway is reachable on the host at `http://localhost:18080`.
 
-```sh
-curl http://localhost:18080/healthz
-curl http://localhost:18080/config
-```
+---
 
-## IPC contract
+## IPC types (shared Go package)
 
-The Go `services/internal/agent` package defines the shared types:
+The `services/internal/agent` package defines shared types used by the gateway:
 
 | Type | Description |
 |---|---|
 | `HealthResponse` | GET /health response |
 | `TurnRequest` | POST /turns request body |
 | `TurnEvent` | One SSE frame from POST /turns |
-| `ToolsResponse` / `ToolInfo` | GET /tools response |
+| `ToolsResponse` | GET /tools response |
 | `AgentMetrics` | GET /metrics response |
-| `StatusResponse` / `StatusComponent` | GET /status response |
-
-## Supervisor restart policy
-
-All three services run under the supervisor's `start_service` loop:
-- Crash restarts: up to 5 times with exponential backoff (1 s, 2 s, 4 s, 8 s, 16 s).
-- After 5 crashes: 30 s cool-off, then counter resets.
-- SIGTERM to supervisor: all services receive SIGTERM; supervisor waits 5 s then halts.
-
-Services run as user `nura` (uid=1000) when `su` is available and the user
-exists in `/etc/passwd`. Falls back to root with a warning if not.
+| `StatusResponse` | GET /status response |

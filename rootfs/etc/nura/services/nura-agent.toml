@@ -1,0 +1,27 @@
+name        = "nura-agent"
+description = "NuraOS Rust AI agent core"
+exec        = "/sbin/nura-agent"
+args        = ["run"]
+type        = "longrun"
+user        = "nura"
+after       = ["llama-server"]
+requires    = ["llama-server"]
+enabled     = true
+
+[restart]
+policy            = "on-failure"
+max_restarts      = 5
+backoff_initial   = 1
+backoff_max       = 30
+crash_loop_limit  = 5
+crash_loop_window = 60
+crash_loop_backoff = 120
+
+[resources]
+cpu_weight = 100
+memory_max = "256M"
+
+[readiness]
+type    = "socket"
+socket  = "/run/nura-agent.sock"
+timeout = 30

@@ -1,0 +1,26 @@
+name        = "gateway"
+description = "NuraOS HTTP gateway"
+exec        = "/sbin/gateway"
+type        = "longrun"
+user        = "nura"
+after       = ["nura-agent"]
+requires    = ["nura-agent"]
+enabled     = true
+
+[restart]
+policy            = "on-failure"
+max_restarts      = 5
+backoff_initial   = 1
+backoff_max       = 30
+crash_loop_limit  = 5
+crash_loop_window = 60
+crash_loop_backoff = 120
+
+[resources]
+cpu_weight = 100
+memory_max = "128M"
+
+[readiness]
+type    = "http"
+url     = "http://127.0.0.1:8080/healthz"
+timeout = 30
