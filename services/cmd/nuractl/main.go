@@ -39,6 +39,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/backup"
 	"github.com/yasserrmd/nuraos/services/internal/compliance"
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/integtest"
 	"github.com/yasserrmd/nuraos/services/internal/secaudit"
 	"github.com/yasserrmd/nuraos/services/internal/delta"
 	"github.com/yasserrmd/nuraos/services/internal/diagbundle"
@@ -134,6 +135,8 @@ func main() {
 		cmdSecaudit(rest, outputJSON)
 	case "data":
 		cmdData(rest, outputJSON)
+	case "integtest":
+		cmdIntegtest(rest, outputJSON)
 	case "diag":
 		cmdDiag(rest, outputJSON)
 	case "backup":
@@ -733,6 +736,46 @@ func cmdSelftest(args []string, asJSON bool) {
 	}
 }
 
+func cmdIntegtest(args []string, asJSON bool) {
+	gatewayURL := os.Getenv("NURA_GATEWAY_URL")
+	agentSocket := os.Getenv("NURA_AGENT_SOCKET")
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "--gateway":
+			gatewayURL = args[i+1]
+			i++
+		case "--agent-socket":
+			agentSocket = args[i+1]
+			i++
+		}
+	}
+
+	r := integtest.New(gatewayURL, agentSocket)
+	ctx := context.Background()
+	rep := r.Run(ctx)
+
+	if asJSON {
+		printJSON(rep)
+		if rep.Fail > 0 {
+			os.Exit(2)
+		}
+		return
+	}
+
+	fmt.Printf("%-36s  %-18s  %-6s  %s\n", "SCENARIO", "SUBSYSTEM", "STATUS", "DETAIL")
+	fmt.Println(strings.Repeat("-", 90))
+	for _, res := range rep.Results {
+		status := string(res.Status)
+		fmt.Printf("%-36s  %-18s  %-6s  %s\n", res.Name, res.Subsystem, status, res.Detail)
+	}
+	fmt.Println(strings.Repeat("-", 90))
+	fmt.Printf("pass=%d fail=%d skip=%d  overall=%s  elapsed=%dms\n",
+		rep.Pass, rep.Fail, rep.Skip, rep.Overall, rep.ElapsedMS)
+	if rep.Fail > 0 {
+		os.Exit(2)
+	}
+}
+
 func cmdBackup(args []string, asJSON bool) {
 	dataDir := os.Getenv("NURA_DATA_DIR")
 	if dataDir == "" {
@@ -990,6 +1033,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "                            Create a consistent backup archive of /data")
 	fmt.Fprintln(os.Stderr, "  restore <archive> [--dest DIR] [--dry-run] [--passphrase P] [--sha256 H]")
 	fmt.Fprintln(os.Stderr, "                            Restore /data from a backup archive")
+	fmt.Fprintln(os.Stderr, "  integtest [--gateway URL] [--agent-socket PATH]")
+	fmt.Fprintln(os.Stderr, "                            Run full system integration test matrix (exit 2 on failure)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json          JSON output")
