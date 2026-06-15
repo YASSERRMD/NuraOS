@@ -25,6 +25,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/entropy"
 	"github.com/yasserrmd/nuraos/services/internal/identity"
+	"github.com/yasserrmd/nuraos/services/internal/sysmetrics"
 )
 
 // version is injected at build time:
@@ -97,6 +98,9 @@ func main() {
 
 	// Cgroup reader: reads per-service resource stats from /sys/fs/cgroup.
 	h.cgMgr = cgroup.NewManager()
+
+	// System metrics collector: network counters, entropy, cgroup stats.
+	h.sysColl = sysmetrics.NewCollector(cgroupServices)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)

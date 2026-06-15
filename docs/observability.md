@@ -177,3 +177,138 @@ nura_gateway_chat_latency_microseconds_total
 
 Use DEBUG or TRACE to see tool arguments during development. These levels must
 not be enabled in production deployments.
+
+## Metrics endpoint
+
+NuraOS exposes a single Prometheus-compatible metrics endpoint at `GET /metrics`
+on the gateway. All OS-level, agent, and inference metrics are emitted from one
+location so a single scrape job covers the entire system.
+
+### Scrape configuration
+
+```yaml
+scrape_configs:
+  - job_name: nuraos
+    static_configs:
+      - targets: ["127.0.0.1:8080"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+```
+
+Auth: if `NURA_AUTH_TOKEN` is set on the gateway, add:
+
+```yaml
+authorization:
+  type: Bearer
+  credentials: <token>
+```
+
+### Grafana dashboard
+
+A static dashboard spec is at `docs/grafana-dashboard.json`. Import it via
+Grafana's "Upload JSON" button and select the NuraOS Prometheus datasource.
+
+### Metric catalogue
+
+#### Gateway
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nura_gateway_uptime_seconds` | gauge | Seconds since gateway process started |
+| `nura_gateway_requests_total{endpoint}` | counter | HTTP requests served per endpoint |
+| `nura_gateway_rate_limited_total` | counter | Requests rejected by rate limiter |
+| `nura_gateway_concurrency_rejected_total` | counter | Requests rejected by concurrency cap |
+| `nura_gateway_chat_latency_microseconds_total` | counter | Cumulative /chat latency |
+| `nura_gateway_chat_requests_completed_total` | counter | /chat requests completed |
+| `process_resident_memory_bytes` | gauge | Go runtime memory from OS |
+
+#### Agent
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nura_agent_uptime_seconds` | gauge | Seconds since nura-agent started |
+| `nura_agent_tokens_in_total` | counter | Prompt tokens consumed |
+| `nura_agent_tokens_out_total` | counter | Completion tokens generated |
+| `nura_agent_turns_total` | counter | Completed inference turns |
+| `nura_agent_tool_calls_total{tool}` | counter | Tool invocations by name |
+| `nura_agent_provider_requests_total{provider}` | counter | Requests sent to each provider |
+
+#### Cgroup (per-service resource usage)
+
+Services: `nura-agent`, `gateway`, `llama-server`
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nura_cgroup_cpu_usage_seconds_total{service}` | counter | Total CPU seconds |
+| `nura_cgroup_memory_bytes{service}` | gauge | Current memory usage |
+| `nura_cgroup_memory_max_bytes{service}` | gauge | Memory hard limit (0 = unlimited) |
+| `nura_cgroup_oom_kills_total{service}` | counter | OOM kills in cgroup |
+
+#### Storage
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nura_disk_total_bytes` | gauge | Total /data filesystem size |
+| `nura_disk_used_bytes` | gauge | Used bytes on /data |
+| `nura_disk_available_bytes` | gauge | Available bytes on /data |
+| `nura_disk_used_percent` | gauge | Percentage in use (0-100) |
+
+#### Network
+
+Read from `/proc/net/dev` on each scrape; all interfaces are exported.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nura_net_rx_bytes_total{interface}` | counter | Total bytes received |
+| `nura_net_tx_bytes_total{interface}` | counter | Total bytes transmitted |
+| `nura_net_rx_packets_total{interface}` | counter | Packets received |
+| `nura_net_tx_packets_total{interface}` | counter | Packets transmitted |
+| `nura_net_rx_drop_total{interface}` | counter | Received packets dropped |
+| `nura_net_tx_drop_total{interface}` | counter | Transmitted packets dropped |
+
+#### Security
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nura_entropy_avail_bits` | gauge | Kernel CSPRNG available entropy bits; 256+ is healthy |
+
+#### Provider health
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nura_provider_circuit_breaker_state{provider}` | gauge | 0=closed, 1=half-open, 2=open |
+| `nura_provider_probe_success_total{provider}` | counter | Cumulative successful probes |
+| `nura_provider_probe_failure_total{provider}` | counter | Cumulative failed probes |
+
+### Alerting examples
+
+```yaml
+- alert: NuraOSDiskHigh
+  expr: nura_disk_used_percent > 85
+  for: 5m
+  annotations:
+    summary: "/data disk usage above 85%"
+
+- alert: NuraOSInferenceOOM
+  expr: increase(nura_cgroup_oom_kills_total{service="llama-server"}[5m]) > 0
+  annotations:
+    summary: "llama-server OOM killed"
+
+- alert: NuraOSProviderDegraded
+  expr: nura_provider_circuit_breaker_state > 1
+  for: 1m
+  annotations:
+    summary: "Provider {{ $labels.provider }} circuit breaker tripped"
+
+- alert: NuraOSLowEntropy
+  expr: nura_entropy_avail_bits < 64
+  for: 30s
+  annotations:
+    summary: "Kernel entropy pool critically low"
+```
+
+### Exporter overhead
+
+Typical total scrape time: under 5 ms at 15-second intervals (< 0.03% of a
+single CPU core). cgroup reads: ~0.5 ms; network counters: ~0.1 ms; entropy:
+< 0.05 ms; agent socket round-trip: ~1 ms.

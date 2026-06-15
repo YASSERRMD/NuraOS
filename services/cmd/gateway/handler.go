@@ -17,6 +17,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/integrity"
 	"github.com/yasserrmd/nuraos/services/internal/modelpool"
 	"github.com/yasserrmd/nuraos/services/internal/providerhealth"
+	"github.com/yasserrmd/nuraos/services/internal/sysmetrics"
 )
 
 // chatBufPool recycles 4 KiB read buffers across SSE proxy iterations.
@@ -39,10 +40,11 @@ type handlers struct {
 	ts           *tokenStore // nil when auth is disabled (tests)
 	machineID    string
 	hostname     string
-	diskMon      *diskmon.Monitor        // nil when disk monitoring is disabled
-	cgMgr        *cgroup.Manager         // nil when cgroup monitoring is disabled
-	modelPool    *modelpool.Pool         // nil when model pool is disabled
-	provHealth   *providerhealth.Manager // nil when provider health is disabled
+	diskMon      *diskmon.Monitor         // nil when disk monitoring is disabled
+	cgMgr        *cgroup.Manager          // nil when cgroup monitoring is disabled
+	modelPool    *modelpool.Pool          // nil when model pool is disabled
+	provHealth   *providerhealth.Manager  // nil when provider health is disabled
+	sysColl      *sysmetrics.Collector    // nil when sysmetrics collection is disabled
 }
 
 func newHandlers(socketPath string, store *MetricsStore) *handlers {
@@ -239,6 +241,9 @@ func (h *handlers) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	h.store.WriteTo(w, agentMetPtr, disk, cgStats, provSnap)
+	if h.sysColl != nil {
+		h.store.WriteSysMetrics(w, h.sysColl.Collect())
+	}
 }
 
 // configHandler serves GET /config and returns the effective gateway

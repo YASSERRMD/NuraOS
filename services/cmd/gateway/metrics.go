@@ -11,6 +11,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/providerhealth"
+	"github.com/yasserrmd/nuraos/services/internal/sysmetrics"
 )
 
 // epIdx identifies a gateway endpoint for per-route request counters.
@@ -254,6 +255,59 @@ func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics, disk *
 		fmt.Fprintf(w, "# TYPE nura_agent_provider_requests_total counter\n")
 		for name, count := range agentMet.ProviderRequests {
 			fmt.Fprintf(w, "nura_agent_provider_requests_total{provider=%q} %d\n", name, count)
+		}
+	}
+}
+
+// WriteSysMetrics appends OS-level system metrics to w in Prometheus text format.
+// A nil receiver is a no-op. sys is the snapshot from sysmetrics.Collect; a
+// zero-value Stats silently emits only the non-zero fields.
+func (m *MetricsStore) WriteSysMetrics(w io.Writer, sys sysmetrics.Stats) {
+	if m == nil {
+		return
+	}
+
+	if sys.EntropyAvailBits > 0 {
+		fmt.Fprintf(w, "# HELP nura_entropy_avail_bits Kernel CSPRNG available entropy bits (/proc/sys/kernel/random/entropy_avail).\n")
+		fmt.Fprintf(w, "# TYPE nura_entropy_avail_bits gauge\n")
+		fmt.Fprintf(w, "nura_entropy_avail_bits %d\n", sys.EntropyAvailBits)
+	}
+
+	if len(sys.Interfaces) > 0 {
+		fmt.Fprintf(w, "# HELP nura_net_rx_bytes_total Total bytes received per network interface.\n")
+		fmt.Fprintf(w, "# TYPE nura_net_rx_bytes_total counter\n")
+		for _, iface := range sys.Interfaces {
+			fmt.Fprintf(w, "nura_net_rx_bytes_total{interface=%q} %d\n", iface.Name, iface.RxBytes)
+		}
+
+		fmt.Fprintf(w, "# HELP nura_net_tx_bytes_total Total bytes transmitted per network interface.\n")
+		fmt.Fprintf(w, "# TYPE nura_net_tx_bytes_total counter\n")
+		for _, iface := range sys.Interfaces {
+			fmt.Fprintf(w, "nura_net_tx_bytes_total{interface=%q} %d\n", iface.Name, iface.TxBytes)
+		}
+
+		fmt.Fprintf(w, "# HELP nura_net_rx_packets_total Total packets received per network interface.\n")
+		fmt.Fprintf(w, "# TYPE nura_net_rx_packets_total counter\n")
+		for _, iface := range sys.Interfaces {
+			fmt.Fprintf(w, "nura_net_rx_packets_total{interface=%q} %d\n", iface.Name, iface.RxPkts)
+		}
+
+		fmt.Fprintf(w, "# HELP nura_net_tx_packets_total Total packets transmitted per network interface.\n")
+		fmt.Fprintf(w, "# TYPE nura_net_tx_packets_total counter\n")
+		for _, iface := range sys.Interfaces {
+			fmt.Fprintf(w, "nura_net_tx_packets_total{interface=%q} %d\n", iface.Name, iface.TxPkts)
+		}
+
+		fmt.Fprintf(w, "# HELP nura_net_rx_drop_total Received packets dropped per network interface.\n")
+		fmt.Fprintf(w, "# TYPE nura_net_rx_drop_total counter\n")
+		for _, iface := range sys.Interfaces {
+			fmt.Fprintf(w, "nura_net_rx_drop_total{interface=%q} %d\n", iface.Name, iface.RxDrop)
+		}
+
+		fmt.Fprintf(w, "# HELP nura_net_tx_drop_total Transmitted packets dropped per network interface.\n")
+		fmt.Fprintf(w, "# TYPE nura_net_tx_drop_total counter\n")
+		for _, iface := range sys.Interfaces {
+			fmt.Fprintf(w, "nura_net_tx_drop_total{interface=%q} %d\n", iface.Name, iface.TxDrop)
 		}
 	}
 }
