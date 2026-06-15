@@ -133,6 +133,17 @@ if [ -f "${AGENT_BIN}" ]; then
     log "installed nura-agent"
 fi
 
+# ----- Seccomp profiles (Phase 70+) -----
+SECCOMP_SRC="${REPO_ROOT}/rootfs/etc/nura/seccomp"
+if [ -d "${SECCOMP_SRC}" ]; then
+    mkdir -p "${STAGING}/etc/nura/seccomp"
+    for f in "${SECCOMP_SRC}"/*.toml; do
+        [ -f "${f}" ] || continue
+        install -m 644 "${f}" "${STAGING}/etc/nura/seccomp/"
+        log "installed seccomp profile: $(basename "${f}")"
+    done
+fi
+
 # ----- Gateway and llama-server (installed by later phases) -----
 for svc in llama-server gateway; do
     SVC_BIN="${REPO_ROOT}/rootfs/staging/sbin/${svc}"

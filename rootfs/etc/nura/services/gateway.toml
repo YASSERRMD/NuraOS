@@ -33,3 +33,7 @@ idle_timeout = 300
 
 [namespaces]
 ipc = true
+
+[seccomp]
+profile = "/etc/nura/seccomp/gateway.toml"
+mode    = "enforce"

@@ -66,6 +66,15 @@ type Readiness struct {
 	Timeout int           `toml:"timeout"`
 }
 
+// Seccomp configures the BPF syscall-filter profile for this unit.
+// When Profile is empty, no filter is applied.
+type Seccomp struct {
+	// Profile is the path to a TOML allowlist file (e.g. /etc/nura/seccomp/gateway.toml).
+	Profile string `toml:"profile"`
+	// Mode is "enforce" (default) or "log" (allow but record to audit log).
+	Mode string `toml:"mode"`
+}
+
 // Namespaces configures which Linux namespaces to clone for this unit.
 // Defaults are all false (no namespace isolation beyond the inherited set).
 type Namespaces struct {
@@ -116,6 +125,8 @@ type Unit struct {
 	SocketActivation SocketActivation `toml:"socket_activation"`
 	// Namespaces declares which Linux namespaces to clone on service start.
 	Namespaces Namespaces `toml:"namespaces"`
+	// Seccomp configures per-service BPF syscall filtering.
+	Seccomp Seccomp `toml:"seccomp"`
 	// Enabled controls whether the unit participates in the start plan.
 	Enabled bool `toml:"enabled"`
 }

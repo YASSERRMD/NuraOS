@@ -378,3 +378,85 @@ nura-agent         PID ?   UID 1000 (no capabilities)
 nura-gateway       PID ?   UID 1001 (no capabilities)
 llama-server       PID ?   UID 1002 (no capabilities)
 ```
+
+---
+
+## Syscall filtering (seccomp)
+
+Each service runs under a BPF allowlist that restricts it to the syscalls it
+actually needs. The service manager (`nura-manager`) installs the filter via
+`prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER)` before exec'ing the service.
+The filter is inherited across all subsequent exec calls in the privilege-drop
+chain (`nura-manager seccomp-exec -> su -> sh -> service`).
+
+### Modes
+
+| Mode | Default action | Use case |
+|------|---------------|----------|
+| `enforce` | `SECCOMP_RET_ERRNO\|EPERM` | Production; denied syscalls return an error |
+| `log` | `SECCOMP_RET_LOG` (kernel audit) | Profile development; all syscalls allowed but unmatched ones are logged |
+
+Run with `mode = "log"` first, collect unmatched syscalls from `/var/log/audit.log`
+or `dmesg | grep seccomp`, add them to the profile, then switch to `mode = "enforce"`.
+
+### Profile format
+
+Profiles live in `/etc/nura/seccomp/<service>.toml`:
+
+```toml
+mode = "enforce"   # optional; overrides the unit-level mode
+
+syscalls = [
+  "read", "write", "openat", "close",
+  # ... additional allowed syscalls
+]
+```
+
+All syscall names use the Linux kernel ABI names (lowercase, no `sys_` prefix).
+Unknown names cause the manager to refuse to start the unit.
+
+### Per-service profile locations
+
+| Service | Profile | Notes |
+|---------|---------|-------|
+| nura-agent | `/etc/nura/seccomp/nura-agent.toml` | Includes UNIX socket + HTTP client syscalls |
+| gateway | `/etc/nura/seccomp/gateway.toml` | Includes TCP accept + UNIX socket client syscalls |
+| llama-server | `/etc/nura/seccomp/llama-server.toml` | Includes `mmap` for model weight loading + pthread syscalls |
+
+Each profile also covers the BusyBox `su` + `sh` launch chain (`execve`, `setresuid`,
+`setresgid`, `capget`, `capset`, etc.). These entries can be removed if the privilege
+drop mechanism changes to `SysProcAttr.Credential` in a future phase.
+
+### Unit configuration
+
+```toml
+[seccomp]
+profile = "/etc/nura/seccomp/nura-agent.toml"
+mode    = "enforce"
+```
+
+### Architecture check
+
+The BPF program loads the `arch` field of `struct seccomp_data` and kills the
+process with `SECCOMP_RET_KILL_PROCESS` if the architecture is not
+`AUDIT_ARCH_X86_64`. This prevents a confused 32-bit ABI from bypassing the
+64-bit allowlist (x32 ABI is disabled on this kernel).
+
+### Extending a profile
+
+1. Set `mode = "log"` in the service's `[seccomp]` section and restart.
+2. Observe the audit log for denied entries:
+   ```sh
+   dmesg | grep 'seccomp'
+   # or: ausearch -m SECCOMP -ts recent
+   ```
+3. Add the missing syscall names to the profile TOML.
+4. Set `mode = "enforce"` and restart to re-enable the filter.
+
+### Attack surface reduction
+
+| Before | After |
+|--------|-------|
+| ~340 available syscalls (x86-64) | 70-100 per service |
+| Any exploit could pivot via arbitrary syscalls | Blocked syscalls return EPERM; no kernel code path reached |
+| Kernel 0-day (e.g. nft, io_uring) exploitable | Kernel subsystem not reachable if its syscall is not in the allowlist |

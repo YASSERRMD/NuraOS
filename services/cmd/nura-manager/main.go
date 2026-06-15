@@ -47,6 +47,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "nura-manager: %v\n", err)
 			os.Exit(1)
 		}
+	case "seccomp-exec":
+		subcmd.SeccompExec(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "nura-manager: unknown command %q\n", os.Args[1])
 		printUsage()
@@ -58,9 +60,11 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: nura-manager <command>")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  run      Start all enabled units in dependency order")
-	fmt.Fprintln(os.Stderr, "  dry-run  Print the computed start plan and exit")
-	fmt.Fprintln(os.Stderr, "  check    Validate all unit files and print any errors")
+	fmt.Fprintln(os.Stderr, "  run          Start all enabled units in dependency order")
+	fmt.Fprintln(os.Stderr, "  dry-run      Print the computed start plan and exit")
+	fmt.Fprintln(os.Stderr, "  check        Validate all unit files and print any errors")
+	fmt.Fprintln(os.Stderr, "  seccomp-exec Apply a seccomp BPF filter then exec a command")
+	fmt.Fprintln(os.Stderr, "               Usage: seccomp-exec --profile <path> --mode <mode> -- <cmd> [args...]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Environment:")
 	fmt.Fprintln(os.Stderr, "  NURA_UNIT_DIR  Directory with *.toml unit files (default: /etc/nura/services)")
