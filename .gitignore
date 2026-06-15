@@ -1,0 +1,83 @@
+# ---- temp / scratch ----
+temp/
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ---- kernel build artifacts ----
+kernel/linux/
+kernel/linux-*/
+kernel/*.tar.*
+kernel/*.tar
+kernel/*.xz
+kernel/*.gz
+kernel/*.sign
+kernel/*.asc
+*.o
+*.a
+*.ko
+*.mod.c
+*.symtypes
+*.order
+*.builtin
+
+# ---- rootfs staging ----
+rootfs/staging/
+rootfs/_staging/
+rootfs/build/
+rootfs/_output/
+
+# ---- image outputs ----
+image/out/bzImage
+image/out/initramfs.cpio.gz
+image/out/data.img
+image/out/boot.log
+image/out/
+# keep the directory itself
+!image/out/.gitkeep
+
+# ---- model files ----
+models/*.gguf
+models/*.bin
+models/*.safetensors
+*.gguf
+*.ggml
+
+# ---- Rust ----
+target/
+agent/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# ---- Go ----
+services/bin/
+services/vendor/
+*.test
+*.out
+
+# ---- toolchain downloads ----
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+musl-*/
+busybox-*/
+llvm-*/
+
+# ---- secrets ----
+secrets.toml
+*.pem
+*.key
+*.crt
+
+# ---- editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- CI / build caches ----
+.cache/
+sccache/
