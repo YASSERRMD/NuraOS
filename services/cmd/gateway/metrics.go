@@ -10,6 +10,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/agent"
 	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
+	"github.com/yasserrmd/nuraos/services/internal/providerhealth"
 )
 
 // epIdx identifies a gateway endpoint for per-route request counters.
@@ -95,8 +96,9 @@ func (m *MetricsStore) uptimeSeconds() int64 {
 // agentMet may be nil when the agent is unreachable; those metric families are
 // omitted rather than emitted with stale zeros. disk may be nil when the
 // monitor has not yet polled or is unconfigured. cgStats may be nil when
-// cgroup metrics are unavailable. A nil receiver emits only a comment line.
-func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics, disk *diskmon.Usage, cgStats map[string]*cgroup.Stats) {
+// cgroup metrics are unavailable. provSnap may be nil or empty when provider
+// health monitoring is not configured. A nil receiver emits only a comment line.
+func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics, disk *diskmon.Usage, cgStats map[string]*cgroup.Stats, provSnap []providerhealth.Status) {
 	if m == nil {
 		fmt.Fprintf(w, "# metrics unavailable\n")
 		return
@@ -185,6 +187,37 @@ func (m *MetricsStore) WriteTo(w io.Writer, agentMet *agent.AgentMetrics, disk *
 			if s != nil {
 				fmt.Fprintf(w, "nura_cgroup_oom_kills_total{service=%q} %d\n", svc, s.OOMKills)
 			}
+		}
+	}
+
+	if len(provSnap) > 0 {
+		// circuit_state encoded as: 0=closed, 1=half-open, 2=open
+		circuitStateVal := func(s string) int {
+			switch s {
+			case "open":
+				return 2
+			case "half-open":
+				return 1
+			default:
+				return 0
+			}
+		}
+		fmt.Fprintf(w, "# HELP nura_provider_circuit_breaker_state Provider circuit breaker state: 0=closed, 1=half-open, 2=open.\n")
+		fmt.Fprintf(w, "# TYPE nura_provider_circuit_breaker_state gauge\n")
+		for _, ps := range provSnap {
+			fmt.Fprintf(w, "nura_provider_circuit_breaker_state{provider=%q} %d\n", ps.Name, circuitStateVal(ps.CircuitState))
+		}
+
+		fmt.Fprintf(w, "# HELP nura_provider_probe_success_total Cumulative successful health probes per provider.\n")
+		fmt.Fprintf(w, "# TYPE nura_provider_probe_success_total counter\n")
+		for _, ps := range provSnap {
+			fmt.Fprintf(w, "nura_provider_probe_success_total{provider=%q} %d\n", ps.Name, ps.ProbeSuccesses)
+		}
+
+		fmt.Fprintf(w, "# HELP nura_provider_probe_failure_total Cumulative failed health probes per provider.\n")
+		fmt.Fprintf(w, "# TYPE nura_provider_probe_failure_total counter\n")
+		for _, ps := range provSnap {
+			fmt.Fprintf(w, "nura_provider_probe_failure_total{provider=%q} %d\n", ps.Name, ps.ProbeFailures)
 		}
 	}
 

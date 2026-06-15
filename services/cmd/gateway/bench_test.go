@@ -100,7 +100,7 @@ func BenchmarkMetricsWriteTo(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rr := httptest.NewRecorder()
-		store.WriteTo(rr, agentMet, nil, nil)
+		store.WriteTo(rr, agentMet, nil, nil, nil)
 	}
 }
 
