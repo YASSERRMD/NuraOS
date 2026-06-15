@@ -170,11 +170,42 @@ issuing the new one once the SIGHUP is confirmed via the log line:
 - Provenance log: content fields never include raw key material.
 - Crash dumps or panic output: `SecretString` has no raw-value `Drop`.
 
+## Constant-time token comparison
+
+The bearer-token check uses `crypto/subtle.ConstantTimeCompare` to prevent
+timing-based token enumeration:
+
+```go
+subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1
+```
+
+A naive `!=` comparison short-circuits on the first differing byte, which
+leaks information about where tokens diverge. Constant-time comparison takes
+the same number of cycles regardless of the mismatch position.
+
+In practice the rate limiter (1 RPS per IP) already prevents bulk timing
+measurements, but the constant-time comparison removes the theoretical risk.
+
+## Security posture check
+
+Run before every release:
+
+```sh
+./scripts/security-check.sh
+```
+
+The script verifies: no hardcoded secret patterns in tracked files,
+`secrets.toml` not tracked in git, constant-time auth, security headers,
+rate-limit and concurrency middleware, `ReadTimeout`, and `MaxBytesReader`.
+
+The CI pipeline runs this check on every pull request (see `ci.yml`).
+
 ## Attack surface summary
 
 | Attack | Mitigation |
 |--------|-----------|
 | Unauth API calls | Bearer token; disabled by default when no token set |
+| Token timing attack | `crypto/subtle.ConstantTimeCompare` |
 | DDoS / request flood | Per-IP rate limit + global concurrency cap |
 | MIME confusion | `X-Content-Type-Options: nosniff` |
 | Clickjacking | `X-Frame-Options: DENY` |
@@ -182,6 +213,7 @@ issuing the new one once the SIGHUP is confirmed via the log line:
 | Slow-client attacks | `ReadTimeout: 10 s` on the HTTP server |
 | Path traversal in tools | `fs.read` rejects `..` components lexically |
 | Root process escape | nura-agent and gateway run as uid=1000 |
+| Hardcoded secrets | CI secrets-scan job on every PR |
 
 ## Least-privilege model (Phase 41)
 

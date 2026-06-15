@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"os"
 	"strings"
@@ -48,7 +49,10 @@ func bearerAuthMiddleware(next http.Handler, ts *tokenStore) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer "+tok {
+		// Use constant-time comparison to avoid timing-based token enumeration.
+		got := []byte(r.Header.Get("Authorization"))
+		want := []byte("Bearer " + tok)
+		if subtle.ConstantTimeCompare(got, want) != 1 {
 			writeJSON(w, http.StatusUnauthorized,
 				map[string]string{"error": "unauthorized"})
 			return
