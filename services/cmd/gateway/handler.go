@@ -29,6 +29,8 @@ type handlers struct {
 	agentClient *agent.Client
 	store       *MetricsStore
 	ts          *tokenStore // nil when auth is disabled (tests)
+	machineID   string
+	hostname    string
 }
 
 func newHandlers(socketPath string, store *MetricsStore) *handlers {
@@ -328,7 +330,7 @@ func (h *handlers) modelsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	defaultActiveSlotFile = "/data/etc/active-slot"
+	defaultActiveSlotFile  = "/data/etc/active-slot"
 	defaultUpdateStateFile = "/data/etc/update-state.json"
 )
 
@@ -461,6 +463,8 @@ func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {
 		Overall:    overall,
 		Version:    version,
 		Uptime:     h.store.uptimeSeconds(),
+		MachineID:  h.machineID,
+		Hostname:   h.hostname,
 		Components: components,
 	}
 
