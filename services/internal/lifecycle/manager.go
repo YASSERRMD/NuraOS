@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/sockact"
 	"github.com/yasserrmd/nuraos/services/internal/unit"
 )
@@ -23,19 +25,25 @@ const StopTimeout = 15 * time.Second
 // Manager orchestrates service units according to a resolved start plan.
 type Manager struct {
 	log      *slog.Logger
+	journal  *journal.Writer
 	mu       sync.Mutex
 	statuses map[string]*serviceStatus
 	procs    map[string]*serviceRun
 }
 
 // NewManager creates a Manager with the given logger.
-func NewManager(log *slog.Logger) *Manager {
+// If journalWriter is non-nil, service stdout/stderr is captured to the journal.
+func NewManager(log *slog.Logger, journalWriter *journal.Writer) *Manager {
 	return &Manager{
 		log:      log,
+		journal:  journalWriter,
 		statuses: make(map[string]*serviceStatus),
 		procs:    make(map[string]*serviceRun),
 	}
 }
+
+// Journal returns the writer in use, or nil if journaling is disabled.
+func (m *Manager) Journal() *journal.Writer { return m.journal }
 
 // Status returns a snapshot of the named service's status.
 func (m *Manager) Status(name string) (StatusSnapshot, bool) {
@@ -237,9 +245,17 @@ func (m *Manager) launchSocketUnit(ctx context.Context, u *unit.Unit, holder *so
 		}
 
 		cmd := exec.CommandContext(runCtx, args[0], args[1:]...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+		var saStdout, saStderr io.ReadCloser
+		if m.journal != nil {
+			saStdout, _ = cmd.StdoutPipe()
+			saStderr, _ = cmd.StderrPipe()
+		} else {
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+		}
+
 		cmd.ExtraFiles = []*os.File{f.File}
 		cmd.Env = append(os.Environ(),
 			"LISTEN_FDS=1",
@@ -252,6 +268,16 @@ func (m *Manager) launchSocketUnit(ctx context.Context, u *unit.Unit, holder *so
 			_ = status.transition(StateFailed, "start: "+err.Error())
 			cancel()
 			return
+		}
+
+		if m.journal != nil {
+			pid := cmd.Process.Pid
+			if saStdout != nil {
+				go journal.Collect(saStdout, m.journal, u.Name, pid, journal.PriInfo)
+			}
+			if saStderr != nil {
+				go journal.Collect(saStderr, m.journal, u.Name, pid, journal.PriError)
+			}
 		}
 
 		run.mu.Lock()
@@ -460,9 +486,23 @@ func (m *Manager) spawnProcess(ctx context.Context, u *unit.Unit) (*exec.Cmd, <-
 	}
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	var stdoutPipe, stderrPipe io.ReadCloser
+	if m.journal != nil {
+		var err error
+		stdoutPipe, err = cmd.StdoutPipe()
+		if err != nil {
+			return nil, nil, fmt.Errorf("stdout pipe: %w", err)
+		}
+		stderrPipe, err = cmd.StderrPipe()
+		if err != nil {
+			return nil, nil, fmt.Errorf("stderr pipe: %w", err)
+		}
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 
 	var readyCh chan struct{}
 	if u.Type == unit.TypeNotify {
@@ -483,6 +523,13 @@ func (m *Manager) spawnProcess(ctx context.Context, u *unit.Unit) (*exec.Cmd, <-
 	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
+
+	if m.journal != nil {
+		pid := cmd.Process.Pid
+		go journal.Collect(stdoutPipe, m.journal, u.Name, pid, journal.PriInfo)
+		go journal.Collect(stderrPipe, m.journal, u.Name, pid, journal.PriError)
+	}
+
 	return cmd, readyCh, nil
 }
 

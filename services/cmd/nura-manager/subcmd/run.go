@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/lifecycle"
 	"github.com/yasserrmd/nuraos/services/internal/resolver"
 	"github.com/yasserrmd/nuraos/services/internal/unit"
@@ -38,6 +39,17 @@ func Run(dir string) error {
 
 	log.Info("nura-manager starting", "units", len(plan.Order))
 
+	const journalDir = "/data/journal"
+	jw, jwErr := journal.NewWriter(journalDir, journal.DefaultMaxSize)
+	if jwErr != nil {
+		log.Warn("journal init failed; service logs will go to stdout", "err", jwErr, "dir", journalDir)
+		jw = nil
+	} else {
+		defer jw.Close()
+		go journal.CollectKmsg("", jw)
+		log.Info("journal started", "dir", journalDir)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sigs := make(chan os.Signal, 1)
@@ -48,7 +60,7 @@ func Run(dir string) error {
 		cancel()
 	}()
 
-	mgr := lifecycle.NewManager(log)
+	mgr := lifecycle.NewManager(log, jw)
 
 	// Start the control socket server so nuractl can query and control services.
 	names := make([]string, len(plan.Order))
