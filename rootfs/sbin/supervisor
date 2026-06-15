@@ -115,6 +115,25 @@ wait_healthy() {
     return 1
 }
 
+# ----- Helper: wait for the agent Unix socket to appear -----
+wait_agent_socket() {
+    local path="$1"
+    local timeout="${2:-30}"
+    local elapsed=0
+
+    log "waiting for agent socket ${path} (timeout ${timeout}s) ..."
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        if grep -q "${path}" /proc/net/unix 2>/dev/null; then
+            log "agent socket ready"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    log "WARNING: agent socket timeout after ${timeout}s; continuing anyway"
+    return 1
+}
+
 # ----- Helper: start a service with restart logic -----
 start_service() {
     local name="$1"
@@ -202,6 +221,7 @@ fi
 
 stage "stage3-gateway"
 if [ -x /sbin/gateway ]; then
+    wait_agent_socket /run/nura-agent.sock 30 || true
     start_service gateway /sbin/gateway &
 else
     log "gateway not installed yet (Phase 28+); skipping"
