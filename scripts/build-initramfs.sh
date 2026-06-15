@@ -43,7 +43,7 @@ log "creating applet symlinks ..."
 APPLETS_BIN="sh cat echo ls mkdir ln cp mv rm chmod chown find grep sed \
     sort wc head tail sleep env uname date dmesg kill killall ps"
 APPLETS_SBIN="init halt poweroff reboot mount umount switch_root pivot_root \
-    ip ping udhcpc mknod"
+    ip ping udhcpc mknod su mdev e2fsck fsck"
 
 for applet in ${APPLETS_BIN}; do
     ln -sf /bin/busybox "${STAGING}/bin/${applet}"
@@ -83,6 +83,24 @@ UDHCPC_SCRIPT="${REPO_ROOT}/rootfs/etc/udhcpc/default.script"
 if [ -f "${UDHCPC_SCRIPT}" ]; then
     mkdir -p "${STAGING}/etc/udhcpc"
     install -m 755 "${UDHCPC_SCRIPT}" "${STAGING}/etc/udhcpc/default.script"
+fi
+
+# mdev device manager configuration (Phase 74+).
+MDEV_CONF="${REPO_ROOT}/rootfs/etc/mdev.conf"
+if [ -f "${MDEV_CONF}" ]; then
+    install -m 644 "${MDEV_CONF}" "${STAGING}/etc/mdev.conf"
+    log "installed mdev.conf"
+fi
+
+# mdev hotplug scripts.
+MDEV_SCRIPTS_DIR="${REPO_ROOT}/rootfs/etc/mdev"
+if [ -d "${MDEV_SCRIPTS_DIR}" ]; then
+    mkdir -p "${STAGING}/etc/mdev"
+    for f in "${MDEV_SCRIPTS_DIR}"/*; do
+        [ -f "${f}" ] || continue
+        install -m 755 "${f}" "${STAGING}/etc/mdev/"
+        log "installed mdev script: $(basename "${f}")"
+    done
 fi
 
 # ----- /dev minimal nodes (backup if devtmpfs auto-populate fails) -----

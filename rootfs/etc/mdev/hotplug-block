@@ -1,0 +1,68 @@
+#!/bin/sh
+# hotplug-block -- mdev ACTION script for block device add/remove events.
+#
+# Environment variables set by mdev:
+#   MDEV    = device name (e.g. "vdb")
+#   ACTION  = "add" | "remove"
+#
+# /run/nura-data-dev contains the absolute path of the configured data device
+# (written by /init). When the configured device appears via hotplug (e.g. late
+# disk attach in QEMU), this script mounts it at /data.
+
+DEVPATH="/dev/${MDEV}"
+DATA_STATE_FILE="/run/nura-data-dev"
+
+case "${ACTION}" in
+
+add)
+    # Skip if /data is already mounted.
+    grep -q ' /data ' /proc/mounts 2>/dev/null && exit 0
+
+    # Skip if this is not the configured data device.
+    [ -f "${DATA_STATE_FILE}" ] || exit 0
+    EXPECTED=$(cat "${DATA_STATE_FILE}")
+    [ "${DEVPATH}" = "${EXPECTED}" ] || exit 0
+
+    # Wait up to 2 seconds for the block device to stabilise.
+    _i=0
+    while [ "${_i}" -lt 20 ]; do
+        [ -b "${DEVPATH}" ] && break
+        sleep 0.1
+        _i=$((_i + 1))
+    done
+    [ -b "${DEVPATH}" ] || exit 1
+
+    # Create /dev/nura-data symlink for deterministic access.
+    ln -sf "${DEVPATH}" /dev/nura-data 2>/dev/null
+
+    # Optional filesystem check before mounting.
+    e2fsck -p "${DEVPATH}" >/dev/null 2>&1 || true
+
+    if mount -t ext4 -o data=ordered,barrier=1,noatime \
+            "${DEVPATH}" /data 2>/dev/null; then
+        echo "[mdev] /data mounted from ${DEVPATH} (hotplug)"
+        # Ensure expected subdirectories exist.
+        mkdir -p /data/models /data/logs /data/sessions /data/etc /data/journal
+        chown 1000:1000 /data/logs /data/sessions 2>/dev/null || true
+        chmod 750 /data/logs /data/sessions 2>/dev/null || true
+        chown 0:1002 /data/models 2>/dev/null || true
+        chmod 750 /data/models 2>/dev/null || true
+    else
+        echo "[mdev] WARNING: failed to mount ${DEVPATH} at /data" >&2
+    fi
+    ;;
+
+remove)
+    # If /data is mounted from this device, unmount cleanly.
+    DATA_MOUNTED=$(grep " /data " /proc/mounts 2>/dev/null | awk '{print $1}')
+    if [ "${DATA_MOUNTED}" = "${DEVPATH}" ]; then
+        umount -l /data 2>/dev/null && \
+            echo "[mdev] /data unmounted (device ${DEVPATH} removed)" || \
+            echo "[mdev] WARNING: failed to unmount /data on ${DEVPATH} removal" >&2
+        rm -f /dev/nura-data 2>/dev/null
+    fi
+    ;;
+
+esac
+
+exit 0
