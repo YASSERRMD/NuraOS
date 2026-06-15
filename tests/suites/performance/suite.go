@@ -49,7 +49,7 @@ func caseHealthzRTT(_ context.Context, inst *harness.QEMUInstance) harness.Resul
 	if err != nil {
 		return fail("healthz-rtt", fmt.Sprintf("GET /healthz error: %v", err))
 	}
-	// Accept 200 or 503; both are valid gateway responses — RTT test is about latency, not component health.
+	// Accept 200 or 503; both are valid gateway responses -- RTT test is about latency, not component health.
 	if code != 200 && code != 503 {
 		return fail("healthz-rtt", fmt.Sprintf("GET /healthz returned %d (want 200 or 503): %s", code, body))
 	}
