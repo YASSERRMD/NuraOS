@@ -20,6 +20,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/resolver"
 	"github.com/yasserrmd/nuraos/services/internal/timesync"
 	"github.com/yasserrmd/nuraos/services/internal/unit"
+	"github.com/yasserrmd/nuraos/services/internal/update"
 )
 
 // defaultLogRatePerSec is the per-service log flood cap. Services that emit
@@ -65,6 +66,15 @@ func Run(dir string) error {
 		log.Info("journal started", "dir", journalDir)
 	} else {
 		log.Warn("journal init failed; service logs will go to stdout", "err", jwErr, "dir", journalDir)
+	}
+
+	// Check for an interrupted update transaction before starting services.
+	// An interrupted transaction is aborted; the system continues on the existing slot.
+	if rec, recErr := update.CheckRecovery(update.Options{DataDir: dataDir}); recErr != nil {
+		log.Warn("update recovery check failed", "err", recErr)
+	} else if rec != nil {
+		log.Warn("interrupted update transaction detected and aborted",
+			"tx_id", rec.TxID, "was_state", string(rec.State))
 	}
 
 	units, err := unit.LoadDir(dir)
