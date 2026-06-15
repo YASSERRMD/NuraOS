@@ -96,6 +96,29 @@ impl ProviderRegistry {
             }
         }
 
+        // ---- llama-ffi provider (feature-gated) ----
+        #[cfg(feature = "llama-ffi")]
+        {
+            use crate::providers::LlamaFfiProvider;
+
+            let model_path = cfg
+                .provider
+                .model_manifest
+                .to_str()
+                .unwrap_or(crate::providers::llama_ffi::DEFAULT_MODEL_PATH)
+                .to_string();
+            let p = LlamaFfiProvider::new(model_path, crate::providers::llama_ffi::DEFAULT_N_CTX);
+            entries.push((
+                ProviderEntry {
+                    name: "llama-ffi".into(),
+                    is_local: true,
+                    capabilities: p.capabilities(),
+                    tier: ProviderTier::Local,
+                },
+                Box::new(p),
+            ));
+        }
+
         // Suppress unused warnings when remote-providers feature is off.
         let _ = secrets;
 
