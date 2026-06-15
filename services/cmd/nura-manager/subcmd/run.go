@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
+	"github.com/yasserrmd/nuraos/services/internal/discovery"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/eventbus"
 	"github.com/yasserrmd/nuraos/services/internal/identity"
@@ -138,6 +140,26 @@ func Run(dir string) error {
 	}
 
 	_ = timeMgr // available for future service injection
+
+	// Optional mDNS LAN discovery (off by default; set NURA_MDNS=1 to enable).
+	// Discovery only advertises the gateway host:port; auth is not bypassed.
+	if os.Getenv("NURA_MDNS") == "1" {
+		hostname, _ := os.Hostname()
+		if hostname == "" {
+			hostname = machineID
+		}
+		gwPort := uint16(8080)
+		if p := os.Getenv("NURA_GATEWAY_PORT"); p != "" {
+			if n, err := strconv.ParseUint(p, 10, 16); err == nil {
+				gwPort = uint16(n)
+			}
+		}
+		disc := discovery.NewResponder(discovery.Config{
+			Hostname: hostname,
+			Port:     gwPort,
+		}, log)
+		go disc.Start(ctx)
+	}
 
 	// Event bus: in-process pub/sub for system events (service lifecycle, disk, OOM).
 	bus := eventbus.NewBus()
