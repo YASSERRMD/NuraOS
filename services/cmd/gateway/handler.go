@@ -16,6 +16,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
 	"github.com/yasserrmd/nuraos/services/internal/integrity"
 	"github.com/yasserrmd/nuraos/services/internal/modelpool"
+	"github.com/yasserrmd/nuraos/services/internal/providerhealth"
 )
 
 // chatBufPool recycles 4 KiB read buffers across SSE proxy iterations.
@@ -33,14 +34,15 @@ const maxChatBodyBytes = 64 * 1024
 var cgroupServices = []string{"nura-agent", "gateway", "llama-server"}
 
 type handlers struct {
-	agentClient *agent.Client
-	store       *MetricsStore
-	ts          *tokenStore // nil when auth is disabled (tests)
-	machineID   string
-	hostname    string
-	diskMon     *diskmon.Monitor  // nil when disk monitoring is disabled
-	cgMgr       *cgroup.Manager   // nil when cgroup monitoring is disabled
-	modelPool   *modelpool.Pool   // nil when model pool is disabled
+	agentClient  *agent.Client
+	store        *MetricsStore
+	ts           *tokenStore // nil when auth is disabled (tests)
+	machineID    string
+	hostname     string
+	diskMon      *diskmon.Monitor        // nil when disk monitoring is disabled
+	cgMgr        *cgroup.Manager         // nil when cgroup monitoring is disabled
+	modelPool    *modelpool.Pool         // nil when model pool is disabled
+	provHealth   *providerhealth.Manager // nil when provider health is disabled
 }
 
 func newHandlers(socketPath string, store *MetricsStore) *handlers {
@@ -229,9 +231,14 @@ func (h *handlers) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		cgStats = h.cgMgr.SliceStats(cgroupServices)
 	}
 
+	var provSnap []providerhealth.Status
+	if h.provHealth != nil {
+		provSnap = h.provHealth.Snapshot()
+	}
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	h.store.WriteTo(w, agentMetPtr, disk, cgStats)
+	h.store.WriteTo(w, agentMetPtr, disk, cgStats, provSnap)
 }
 
 // configHandler serves GET /config and returns the effective gateway
@@ -527,6 +534,21 @@ func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {
 		modelComp.Detail = "model pool not configured"
 	}
 	components = append(components, modelComp)
+
+	// Provider health: one component per registered provider with circuit state.
+	if h.provHealth != nil {
+		for _, ps := range h.provHealth.Snapshot() {
+			pComp := agent.StatusComponent{Name: "provider:" + ps.Name}
+			if ps.ShouldFallback {
+				pComp.Status = "degraded"
+				pComp.Detail = "circuit open (falling back to local)"
+			} else {
+				pComp.Status = "ok"
+				pComp.Detail = "circuit " + ps.CircuitState
+			}
+			components = append(components, pComp)
+		}
+	}
 
 	overall := "ok"
 	for _, c := range components {

@@ -262,3 +262,98 @@ then boot normally; the supervisor starts llama-server automatically.
 4. Map your backend's streaming events into `StreamEvent`.
 5. Poll `cancel.is_cancelled()` between every chunk.
 6. Never import the type from inside `nura-core`.
+
+## Resilience model
+
+NuraOS monitors cloud provider reachability from the Go gateway layer and
+implements a three-state circuit breaker per provider. When a provider
+degrades, the gateway logs a deterministic fallback decision and routes
+inference to the local llama-server instead.
+
+### Health probes
+
+The `services/internal/healthprobe` package fires a periodic HTTP GET against
+each configured provider probe URL. A 2xx response is a success; any network
+error or non-2xx response is a failure. Each probe runs in its own goroutine
+and sends results to the provider health manager.
+
+Default probe parameters:
+
+| Parameter | Default |
+|-----------|---------|
+| Interval | 30 s |
+| Timeout | 5 s |
+| Fail threshold | 3 consecutive failures |
+| Recovery threshold | 2 consecutive successes |
+| Open duration (cooldown) | 30 s |
+
+### Circuit breaker states
+
+```
+Closed --[N failures]--> Open --[cooldown elapsed]--> HalfOpen
+  ^                                                        |
+  +-----[M successes]----------------------------------+  |
+                                                          |
+                        Open <--[failure in HalfOpen]----+
+```
+
+| State | Requests allowed | Description |
+|-------|-----------------|-------------|
+| `closed` | yes | Normal; failures increment the counter |
+| `open` | no | Tripped; all requests fall back to local |
+| `half-open` | yes (probes only) | Recovery; enough successes close the circuit |
+
+State transitions publish `provider.healthy` or `provider.degraded` events on
+the event bus so operators can react via `nuractl events`.
+
+### Fallback routing
+
+`Manager.ShouldFallback(name)` returns `true` when the named provider's
+circuit is Open. The agent router checks this before dispatching to a cloud
+provider; a `true` result causes the request to be sent to the local
+llama-server instead. The fallback decision is logged at `WARN` level with
+the provider name and current circuit state.
+
+### /status surface
+
+`GET /status` includes one component per registered provider:
+
+```json
+{
+  "name": "provider:anthropic",
+  "status": "degraded",
+  "detail": "circuit open (falling back to local)"
+}
+```
+
+When the circuit is closed or half-open, `status` is `"ok"` and `detail`
+shows the circuit state string.
+
+### /metrics surface
+
+Three metric families are emitted per registered provider:
+
+```
+# TYPE nura_provider_circuit_breaker_state gauge
+nura_provider_circuit_breaker_state{provider="anthropic"} 2
+
+# TYPE nura_provider_probe_success_total counter
+nura_provider_probe_success_total{provider="anthropic"} 47
+
+# TYPE nura_provider_probe_failure_total counter
+nura_provider_probe_failure_total{provider="anthropic"} 3
+```
+
+Circuit state encoding: `0` = closed, `1` = half-open, `2` = open.
+
+### Logging
+
+Every probe failure is logged at `WARN` level:
+
+```
+WARN provider probe failed provider=anthropic circuit=open err="connection refused"
+```
+
+Fallback decisions are deterministic: the same provider state always produces
+the same routing outcome with the same log line. No random jitter or silent
+routing is applied.
