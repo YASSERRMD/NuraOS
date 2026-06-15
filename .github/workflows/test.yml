@@ -271,3 +271,45 @@ jobs:
       - name: Fail job on suite failure
         if: steps.run-suite.outcome == 'failure'
         run: exit 1
+
+  # -----------------------------------------------------------------------
+  # Aggregate: merge all suite reports into one run summary.
+  # Runs after every suite job has completed (pass or fail).
+  # -----------------------------------------------------------------------
+  aggregate:
+    name: Aggregate reports
+    needs: suite
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all suite artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: suite-*
+          path: tests/reports/
+          merge-multiple: true
+
+      - name: Merge reports and generate summary
+        env:
+          NURA_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          chmod +x tests/tools/merge-reports.sh
+          tests/tools/merge-reports.sh \
+            --report-dir tests/reports \
+            --commit "${{ github.sha }}" \
+            --run-url "${NURA_RUN_URL}" || true
+
+      - name: Upload merged report and badge
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-summary
+          path: |
+            tests/reports/merged-report.json
+            tests/reports/job-summary.md
+            tests/reports/summary.html
+            tests/reports/badge.json
+            tests/reports/trend.jsonl
+          retention-days: 90
+          if-no-files-found: ignore
