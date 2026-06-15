@@ -327,6 +327,55 @@ func (h *handlers) modelsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+const (
+	defaultActiveSlotFile = "/data/etc/active-slot"
+	defaultUpdateStateFile = "/data/etc/update-state.json"
+)
+
+func activeSlotFile() string {
+	if v := os.Getenv("ACTIVE_SLOT_FILE"); v != "" {
+		return v
+	}
+	return defaultActiveSlotFile
+}
+
+func updateStateFile() string {
+	if v := os.Getenv("UPDATE_STATE"); v != "" {
+		return v
+	}
+	return defaultUpdateStateFile
+}
+
+// updateStatusHandler serves GET /update/status.
+// Returns the active A/B slot and the last recorded update state.
+func (h *handlers) updateStatusHandler(w http.ResponseWriter, r *http.Request) {
+	h.store.incRequest(epUpdateStatus)
+
+	slot := "a"
+	if data, err := os.ReadFile(activeSlotFile()); err == nil {
+		s := strings.TrimSpace(string(data))
+		if s == "a" || s == "b" {
+			slot = s
+		}
+	}
+
+	inactive := "b"
+	if slot == "b" {
+		inactive = "a"
+	}
+
+	var state json.RawMessage
+	if data, err := os.ReadFile(updateStateFile()); err == nil {
+		state = json.RawMessage(data)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"active_slot":   slot,
+		"inactive_slot": inactive,
+		"update_state":  state,
+	})
+}
+
 // statusHandler serves GET /status with a human-readable JSON health summary.
 // Returns 200 when all components are ok; 503 when any component is degraded.
 func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {
