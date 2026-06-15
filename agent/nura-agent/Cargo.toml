@@ -8,6 +8,10 @@ description = "NuraOS AI agent binary"
 name = "nura-agent"
 path = "src/main.rs"
 
+[features]
+# Include Anthropic and OpenAI network providers. Disable for offline-only builds.
+remote-providers = []
+
 [dependencies]
 nura-core = { path = "../nura-core" }
 serde_json = "1"
