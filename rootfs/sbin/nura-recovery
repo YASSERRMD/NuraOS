@@ -1,0 +1,205 @@
+#!/bin/sh
+# NuraOS recovery console.
+#
+# Called by rootfs/init when nura.recovery=1 is on the kernel cmdline.
+# By the time this runs:
+#   /proc, /sys, /dev are mounted.
+#   /data is mounted (rw or ro) or tmpfs-fallback -- mount attempted.
+#   Network is NOT started (recovery isolation).
+#   The supervisor is NOT started.
+#
+# On exit (user selects 'q'), this script returns; init will halt/reboot.
+
+RECOVERY_VERSION="1.0"
+
+log()  { printf '[recovery] %s\n' "$*"; }
+warn() { printf '[recovery] WARNING: %s\n' "$*" >&2; }
+
+print_banner() {
+    printf '\n'
+    printf '=====================================================\n'
+    printf '  NuraOS Recovery Console v%s\n' "${RECOVERY_VERSION}"
+    printf '=====================================================\n'
+    printf '\n'
+    SLOT=$(cat /data/etc/active-slot 2>/dev/null | tr -d '[:space:]' || echo 'unknown')
+    KVER=$(uname -r 2>/dev/null || echo 'unknown')
+    UPTIME=$(awk '{printf "%ds", int($1)}' /proc/uptime 2>/dev/null || echo 'unknown')
+    printf '  Slot:    %s\n' "${SLOT}"
+    printf '  Kernel:  %s\n' "${KVER}"
+    printf '  Uptime:  %s\n' "${UPTIME}"
+    printf '\n'
+    printf '  Network is DISABLED. Agent is NOT running.\n'
+    printf '\n'
+}
+
+print_menu() {
+    printf '\nRecovery options:\n'
+    printf '  1) Open shell             (BusyBox sh)\n'
+    printf '  2) Check /data filesystem (e2fsck)\n'
+    printf '  3) View update history\n'
+    printf '  4) Rollback to other slot\n'
+    printf '  5) View journal log\n'
+    printf '  6) Factory reset /data\n'
+    printf '  q) Reboot\n'
+    printf '\n'
+}
+
+cmd_shell() {
+    log "starting shell -- type 'exit' to return to the menu"
+    sh
+}
+
+cmd_fsck() {
+    DATA_DEV=$(cat /run/nura-data-dev 2>/dev/null)
+    if [ -z "${DATA_DEV}" ]; then
+        warn "data device path not found at /run/nura-data-dev"
+        return
+    fi
+    printf '[recovery] unmounting /data for fsck ...\n'
+    umount /data 2>/dev/null || warn "umount /data failed; fsck on live fs may be unreliable"
+    printf '[recovery] running e2fsck on %s ...\n' "${DATA_DEV}"
+    e2fsck -f -C 0 "${DATA_DEV}" || true
+    printf '[recovery] remounting /data ...\n'
+    mount -t ext4 -o data=ordered,barrier=1 "${DATA_DEV}" /data 2>/dev/null || \
+        warn "remount failed; /data may be unavailable"
+    printf '[recovery] e2fsck done.\n'
+    printf 'Press Enter to continue...' && read -r _
+}
+
+cmd_history() {
+    HIST=/data/update/history.json
+    if [ -f "${HIST}" ]; then
+        printf '[recovery] update history (%s):\n' "${HIST}"
+        cat "${HIST}"
+    else
+        printf '[recovery] no history file at %s\n' "${HIST}"
+    fi
+    printf '\nPress Enter to continue...' && read -r _
+}
+
+cmd_rollback() {
+    SLOT_FILE=/data/etc/active-slot
+    CURRENT=$(cat "${SLOT_FILE}" 2>/dev/null | tr -d '[:space:]' || echo 'a')
+    if [ "${CURRENT}" = "a" ]; then TARGET="b"; else TARGET="a"; fi
+
+    printf '\n[recovery] current active slot: %s\n' "${CURRENT}"
+    printf '[recovery] rollback target:     %s\n' "${TARGET}"
+    printf 'Roll back to slot %s? [yes/no]: ' "${TARGET}"
+    read -r ANSWER
+    if [ "${ANSWER}" != "yes" ]; then
+        log "rollback cancelled"
+        return
+    fi
+    TMP="${SLOT_FILE}.tmp"
+    printf '%s\n' "${TARGET}" > "${TMP}" && mv "${TMP}" "${SLOT_FILE}"
+    log "active slot set to ${TARGET}; reboot to apply"
+
+    # If nuractl is available, record the rollback in history.
+    if command -v nuractl >/dev/null 2>&1; then
+        nuractl history list 2>/dev/null | grep -m1 "\"slot\": \"${TARGET}\"" | \
+            grep '"id"' | sed 's/.*"id": *"\([^"]*\)".*/\1/' | \
+            xargs -r nuractl history rollback 2>/dev/null || true
+    fi
+}
+
+cmd_journal() {
+    JOURNAL=/data/journal/nura.log
+    if [ -f "${JOURNAL}" ]; then
+        log "last 50 lines of ${JOURNAL}:"
+        tail -50 "${JOURNAL}"
+    else
+        printf '[recovery] no journal at %s\n' "${JOURNAL}"
+    fi
+    printf '\nPress Enter to continue...' && read -r _
+}
+
+cmd_factory_reset() {
+    printf '\n'
+    warn "FACTORY RESET will wipe /data: sessions, logs, packages, config, journal."
+    warn "This cannot be undone."
+
+    PRESERVE_ID=0
+    RESET_CONF=/data/etc/factory-reset.conf
+    if [ -f "${RESET_CONF}" ] && grep -q "^preserve_machine_id=yes" "${RESET_CONF}" 2>/dev/null; then
+        PRESERVE_ID=1
+        log "machine-id will be PRESERVED (${RESET_CONF}: preserve_machine_id=yes)"
+    else
+        log "machine-id will be regenerated on next boot"
+    fi
+
+    printf '\nType RESET to confirm factory reset: '
+    read -r CONF1
+    if [ "${CONF1}" != "RESET" ]; then
+        log "factory reset cancelled"
+        return
+    fi
+    printf 'Type RESET again to confirm: '
+    read -r CONF2
+    if [ "${CONF2}" != "RESET" ]; then
+        log "factory reset cancelled"
+        return
+    fi
+
+    log "starting factory reset ..."
+
+    # Save machine-id if configured to preserve it.
+    SAVED_MACHINE_ID=""
+    if [ "${PRESERVE_ID}" -eq 1 ] && [ -f /data/etc/machine-id ]; then
+        SAVED_MACHINE_ID=$(cat /data/etc/machine-id)
+        log "saved machine-id: ${SAVED_MACHINE_ID}"
+    fi
+
+    # Wipe data directories.
+    for dir in sessions logs models packages update overlay journal; do
+        [ -d "/data/${dir}" ] && rm -rf "/data/${dir}" && log "wiped /data/${dir}"
+    done
+
+    # Wipe /data/etc except factory-reset.conf and active-slot.
+    for item in /data/etc/*; do
+        case "${item}" in
+            */factory-reset.conf) continue ;;
+            */active-slot) continue ;;  # preserve current slot
+        esac
+        rm -rf "${item}" && log "wiped ${item}"
+    done
+
+    # Recreate standard directory layout.
+    mkdir -p /data/models /data/logs /data/sessions /data/etc \
+              /data/journal /data/packages /data/update
+
+    # Restore machine-id if preserved.
+    if [ "${PRESERVE_ID}" -eq 1 ] && [ -n "${SAVED_MACHINE_ID}" ]; then
+        printf '%s\n' "${SAVED_MACHINE_ID}" > /data/etc/machine-id
+        log "restored machine-id"
+    fi
+
+    # Write reset marker; first-boot provisioning can detect this.
+    RESET_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%s)
+    printf '%s\n' "${RESET_TS}" > /data/etc/factory-reset-at
+    log "factory reset complete (timestamp: ${RESET_TS})"
+    log "reboot to start fresh"
+    printf '\nPress Enter to continue...' && read -r _
+}
+
+print_banner
+
+while true; do
+    print_menu
+    printf 'Choice [1-6, q]: '
+    read -r CHOICE
+    case "${CHOICE}" in
+        1) cmd_shell ;;
+        2) cmd_fsck ;;
+        3) cmd_history ;;
+        4) cmd_rollback ;;
+        5) cmd_journal ;;
+        6) cmd_factory_reset ;;
+        q|Q) break ;;
+        *) printf '[recovery] unknown choice: %s\n' "${CHOICE}" ;;
+    esac
+done
+
+log "recovery console exited; initiating reboot ..."
+sync
+# On QEMU -no-reboot the reboot will actually power off.
+reboot -f 2>/dev/null || halt -f 2>/dev/null || exec sh
