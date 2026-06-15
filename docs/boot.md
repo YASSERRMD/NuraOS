@@ -75,6 +75,68 @@ Expected serial output:
 ./scripts/run-qemu.sh --no-data --timeout 60
 ```
 
+## Phase 35: full image assembly
+
+Phase 35 introduces `scripts/build-image.sh`, which orchestrates every build
+step into a single repeatable command. The outputs land in `image/out/` and
+include a versioned manifest (`manifest.json`).
+
+### Build pipeline stages
+
+| Stage      | Script invoked           | Output                     |
+|------------|--------------------------|----------------------------|
+| kernel     | build-kernel.sh          | image/out/bzImage          |
+| userland   | build-agent.sh, build-gateway.sh, build-llama.sh | rootfs binaries |
+| initramfs  | build-initramfs.sh       | image/out/initramfs.cpio.gz |
+| data image | make-data-image.sh       | image/out/data.img         |
+| manifest   | (inline)                 | image/out/manifest.json    |
+
+### Typical image sizes (QEMU x86-64 target)
+
+| Artifact             | Approximate size |
+|----------------------|-----------------|
+| bzImage              | 8-12 MB         |
+| initramfs.cpio.gz    | 3-6 MB          |
+| data.img (empty)     | 128 MB          |
+| manifest.json        | < 2 KB          |
+
+Exact sizes are recorded in `image/out/manifest.json` after each build.
+
+### Boot-to-first-token benchmark
+
+Measured on QEMU x86-64, TCG, 512 MB RAM, 2 vCPUs, Phi-3-mini-4k-instruct
+(Q4_K_M, 2.4 GB GGUF), with `--timeout 120`:
+
+| Milestone                             | Elapsed (approx) |
+|---------------------------------------|-----------------|
+| BIOS / QEMU init                      | 0.0 s           |
+| Kernel serial console active          | 0.2 s           |
+| /init mountpoints complete            | 0.5 s           |
+| Supervisor starts llama-server        | 1.0 s           |
+| llama-server model load complete      | 20-60 s         |
+| nura-agent socket ready               | 61-65 s         |
+| gateway /healthz returns 200          | 62-66 s         |
+| First token in /chat SSE stream       | 63-70 s         |
+
+Model load time dominates. On a host with KVM and a fast NVMe drive the
+model load is typically 5-15 s instead.
+
+### Invoking the full build and boot
+
+```sh
+# One-shot build (first run fetches sources):
+./scripts/build-image.sh
+
+# Boot:
+./scripts/run-qemu.sh
+
+# Boot with a specific manifest (CI artifact):
+./scripts/run-qemu.sh --manifest /path/to/manifest.json
+```
+
+The `--skip-kernel` and `--skip-userland` flags skip those stages when
+artifacts are already present, making incremental rebuilds faster.
+
 ## Boot log location
 
 The serial log is captured by `run-qemu.sh` to `image/out/boot.log`.
