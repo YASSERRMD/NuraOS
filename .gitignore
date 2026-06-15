@@ -29,6 +29,12 @@ rootfs/_staging/
 rootfs/build/
 rootfs/_output/
 
+# ---- BusyBox sources (fetched, not committed) ----
+third_party/busybox-*/
+third_party/_download/
+third_party/musl-*/
+third_party/musl-install/
+
 # ---- image outputs ----
 image/out/bzImage
 image/out/initramfs.cpio.gz
