@@ -1,0 +1,105 @@
+#!/bin/sh
+# /init -- PID 1 bootstrap for NuraOS initramfs.
+# This script is executed by the kernel directly after mounting the initramfs.
+# It sets up the essential mounts, brings up the network, mounts /data,
+# then hands control to the supervisor (or drops to a shell in recovery mode).
+
+# Redirect stderr to console early so errors are visible.
+exec 2>/dev/console
+
+log() { echo "[init] $*"; }
+warn() { echo "[init] WARNING: $*" >&2; }
+die()  { echo "[init] FATAL: $*" >&2; exec sh; }
+
+# Read kernel cmdline for flags.
+read -r CMDLINE < /proc/cmdline 2>/dev/null || CMDLINE=""
+has_flag() { echo "${CMDLINE}" | grep -qw "$1"; }
+
+log "NuraOS init starting"
+
+# ----- Essential virtual filesystems -----
+log "mounting proc ..."
+mount -t proc proc /proc || die "failed to mount /proc"
+
+log "mounting sysfs ..."
+mount -t sysfs sysfs /sys || die "failed to mount /sys"
+
+log "mounting devtmpfs ..."
+mount -t devtmpfs devtmpfs /dev || die "failed to mount /dev"
+
+# Create a minimal set of device nodes in case devtmpfs is not available.
+[ -c /dev/console ] || mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ]    || mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ]    || mknod -m 666 /dev/zero c 1 5
+[ -c /dev/urandom ] || mknod -m 444 /dev/urandom c 1 9
+
+log "mounting tmpfs on /tmp ..."
+mount -t tmpfs tmpfs /tmp
+
+# ----- Recovery mode -----
+if has_flag "nura.recovery=1"; then
+    log "recovery flag set; dropping to emergency shell"
+    log "exit the shell to continue the boot sequence"
+    exec sh
+fi
+
+# ----- Network bringup -----
+log "bringing up loopback ..."
+ip link set lo up 2>/dev/null || warn "failed to bring up loopback"
+
+log "bringing up eth0 (DHCP) ..."
+ip link set eth0 up 2>/dev/null && \
+    udhcpc -i eth0 -q -n -t 5 2>/dev/null && \
+    log "eth0: DHCP OK" || warn "eth0 DHCP failed; continuing without network"
+
+# Write a minimal resolv.conf if DHCP did not create one.
+[ -f /etc/resolv.conf ] || printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+
+# ----- /data persistent partition -----
+DATA_DEV=""
+# Look for the first virtio block device that is not the root.
+for dev in /dev/vda /dev/vdb /dev/sda; do
+    [ -b "${dev}" ] && DATA_DEV="${dev}" && break
+done
+
+if [ -n "${DATA_DEV}" ]; then
+    log "mounting /data from ${DATA_DEV} ..."
+    if mount -t ext4 "${DATA_DEV}" /data 2>/dev/null; then
+        log "/data mounted"
+        # Ensure expected subdirectory layout.
+        mkdir -p /data/models /data/logs /data/sessions /data/etc
+    else
+        warn "failed to mount ${DATA_DEV} as ext4; /data will be tmpfs"
+        mount -t tmpfs tmpfs /data
+        mkdir -p /data/models /data/logs /data/sessions /data/etc
+    fi
+else
+    warn "no /data block device found; /data will be tmpfs (no persistence)"
+    mount -t tmpfs tmpfs /data
+    mkdir -p /data/models /data/logs /data/sessions /data/etc
+fi
+
+# ----- Optional network self-test (off by default) -----
+if has_flag "nura.nettest=1"; then
+    GW=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
+    if [ -n "${GW}" ]; then
+        log "network self-test: pinging gateway ${GW} ..."
+        ping -c 1 -W 2 "${GW}" >/dev/null 2>&1 && \
+            log "network self-test: PASS" || \
+            warn "network self-test: FAIL (no route to gateway)"
+    else
+        warn "network self-test: no default gateway found"
+    fi
+fi
+
+# ----- Hand off to supervisor -----
+SUPERVISOR=/sbin/supervisor
+if [ -x "${SUPERVISOR}" ]; then
+    log "exec ${SUPERVISOR}"
+    exec "${SUPERVISOR}"
+else
+    # Phase 07: supervisor not yet present; drop to a shell for interactive use.
+    log "supervisor not found at ${SUPERVISOR}; dropping to BusyBox shell"
+    log "Type 'poweroff' or 'halt' to exit."
+    exec sh
+fi
