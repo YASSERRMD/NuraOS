@@ -969,3 +969,85 @@ res, err := r.Run(ctx, toolsandbox.Grant{
 
 `Run` returns after the tool exits or the timeout fires. Non-zero exit codes
 are in `res.ExitCode`; stdout and stderr are in `res.Stdout`/`res.Stderr`.
+
+---
+
+## Security audit (secaudit)
+
+The `secaudit` package provides automated security posture checks that run
+in CI and on the appliance. Each check produces a Finding with status
+(`pass`/`fail`/`warn`/`skip`) and severity (`info`/`warn`/`critical`).
+The overall audit result is `fail` when any critical-severity check fails.
+
+### Automated checks
+
+| Check | Category | Severity | What it tests |
+|-------|----------|----------|----------------|
+| `seccomp-enabled` | kernel | critical | `/proc/sys/kernel/seccomp/actions_avail` readable |
+| `namespaces-enabled` | kernel | critical | mnt, pid, net namespace entries in /proc/self/ns/ |
+| `capabilities-check` | kernel | warn | CapEff=0 in /proc/self/status |
+| `secrets-file-permissions` | secrets | critical | /data/etc/secrets.toml and agent.toml are mode <= 0600 |
+| `secrets-not-in-environment` | secrets | critical | known secret env vars not set (warns if they are) |
+| `kernel-lockdown` | boot | warn | /sys/kernel/security/lockdown is integrity or confidentiality |
+| `open-ports-loopback-only` | network | critical | gateway port 8080 is not reachable on LAN interfaces |
+| `no-debug-ports` | network | warn | pprof (6060) and debugger (2345, 40000) not exposed on LAN |
+| `rng-entropy` | crypto | critical | entropy_avail >= 64 bits |
+| `umask-restrictive` | filesystem | warn | temp files created without group/world write permission |
+
+### Running the audit
+
+```sh
+nuractl secaudit
+```
+
+Filter to critical checks only (suitable as a CI gate):
+
+```sh
+nuractl secaudit --critical
+```
+
+JSON output:
+
+```sh
+nuractl secaudit --json
+```
+
+Exit code is 2 when any critical check fails, 0 otherwise.
+
+### Manual pen-test checklist
+
+The following items must be verified before each release:
+
+1. **Boot integrity**: Verify GRUB is password-protected and the kernel
+   is signed. Boot the image with `mokutil --sb-state` showing SecureBoot
+   enabled (where applicable).
+
+2. **Firewall rules**: Confirm only port 8080 (loopback) is open.
+   Run `ss -tlnp` and `nuractl secaudit --critical`.
+
+3. **Secrets hygiene**: Verify `/data/etc/secrets.toml` has mode 0600.
+   Confirm no secret appears in logs (`nuractl logs gateway | grep -i key`).
+
+4. **Update signing**: Verify that `nuractl update apply` rejects an
+   unsigned or tampered image (tamper the SHA and observe the failure).
+
+5. **Sandbox escape**: Attempt to write outside the granted Landlock paths
+   from within a tool subprocess. Verify the write is blocked.
+
+6. **TLS (if LAN bind enabled)**: Verify the gateway rejects connections
+   without a valid certificate when TLS is configured.
+
+7. **Crash redaction**: Intentionally crash a service with a secret in its
+   logs; verify the capture in /data/crashes/ does not contain the secret.
+
+### CI integration
+
+Add the following step to your CI pipeline to gate on critical findings:
+
+```yaml
+- name: Security audit
+  run: |
+    nuractl secaudit --critical --json > audit.json
+    cat audit.json
+    # Exit 2 if any critical check fails (propagated from nuractl)
+```
