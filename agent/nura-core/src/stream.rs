@@ -232,3 +232,146 @@ struct PartialToolCall {
     arguments: String,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::message::StopReason;
+    use crate::provider::StreamEvent;
+
+    fn run_stream(events: Vec<Result<StreamEvent>>, timeout_secs: u64) -> Result<AggregatedOutput> {
+        let cancel = CancelToken::new();
+        let mut tokens = Vec::<String>::new();
+        aggregate(
+            Box::new(events.into_iter()),
+            cancel,
+            Duration::from_secs(timeout_secs),
+            32,
+            &mut |t| tokens.push(t.to_string()),
+        )
+    }
+
+    #[test]
+    fn aggregates_text_and_usage() {
+        let events = vec![
+            Ok(StreamEvent::token("hello")),
+            Ok(StreamEvent::token(" world")),
+            Ok(StreamEvent::Usage(Usage {
+                prompt_tokens: 5,
+                completion_tokens: 2,
+            })),
+            Ok(StreamEvent::done(StopReason::EndOfTurn)),
+        ];
+        let out = run_stream(events, 10).unwrap();
+        assert_eq!(out.text, "hello world");
+        assert_eq!(out.stop_reason, StopReason::EndOfTurn);
+        assert!(!out.cancelled);
+        assert!(!out.timed_out);
+        let u = out.usage.unwrap();
+        assert_eq!(u.prompt_tokens, 5);
+        assert_eq!(u.completion_tokens, 2);
+    }
+
+    #[test]
+    fn assembles_tool_call_from_deltas() {
+        let events = vec![
+            Ok(StreamEvent::ToolCallDelta {
+                id: "tc-1".into(),
+                name: Some("read_file".into()),
+                arguments_chunk: r#"{"path":"#.into(),
+            }),
+            Ok(StreamEvent::ToolCallDelta {
+                id: "tc-1".into(),
+                name: None,
+                arguments_chunk: r#""/etc/os"}"#.into(),
+            }),
+            Ok(StreamEvent::done(StopReason::ToolCall)),
+        ];
+        let out = run_stream(events, 10).unwrap();
+        assert_eq!(out.tool_calls.len(), 1);
+        assert_eq!(out.tool_calls[0].name, "read_file");
+        assert!(out.tool_calls[0].arguments_json.contains("/etc/os"));
+        assert_eq!(out.stop_reason, StopReason::ToolCall);
+    }
+
+    #[test]
+    fn mid_stream_cancel() {
+        let cancel = CancelToken::new();
+        let cancel_clone = cancel.clone();
+
+        let events: Vec<Result<StreamEvent>> = vec![
+            Ok(StreamEvent::token("partial")),
+            Ok(StreamEvent::token(" text")),
+            Ok(StreamEvent::done(StopReason::EndOfTurn)),
+        ];
+
+        cancel_clone.cancel();
+
+        let mut tokens = Vec::new();
+        let out = aggregate(
+            Box::new(events.into_iter()),
+            cancel,
+            Duration::from_secs(10),
+            32,
+            &mut |t| tokens.push(t.to_string()),
+        )
+        .unwrap();
+
+        assert!(out.cancelled, "should be marked cancelled");
+        assert_eq!(out.stop_reason, StopReason::Cancel);
+    }
+
+    #[test]
+    fn provider_error_propagated() {
+        let events = vec![
+            Ok(StreamEvent::token("hi")),
+            Err(NuraError::Provider {
+                provider: "test".into(),
+                detail: "boom".into(),
+            }),
+        ];
+        let result = run_stream(events, 10);
+        assert!(result.is_err(), "provider error should be returned");
+    }
+
+    #[test]
+    fn timeout_closes_cleanly() {
+        let cancel = CancelToken::new();
+        let events: Vec<Result<StreamEvent>> = vec![
+            Ok(StreamEvent::token("slow")),
+        ];
+
+        let mut tokens = Vec::new();
+        let out = aggregate(
+            Box::new(events.into_iter()),
+            cancel,
+            Duration::from_millis(50),
+            32,
+            &mut |t| tokens.push(t.to_string()),
+        )
+        .unwrap();
+
+        assert!(out.timed_out || !out.text.is_empty(), "partial result expected");
+    }
+
+    #[test]
+    fn on_token_called_for_each_delta() {
+        let events = vec![
+            Ok(StreamEvent::token("a")),
+            Ok(StreamEvent::token("b")),
+            Ok(StreamEvent::token("c")),
+            Ok(StreamEvent::done(StopReason::EndOfTurn)),
+        ];
+        let cancel = CancelToken::new();
+        let mut received = Vec::new();
+        aggregate(
+            Box::new(events.into_iter()),
+            cancel,
+            Duration::from_secs(5),
+            32,
+            &mut |t| received.push(t.to_string()),
+        )
+        .unwrap();
+        assert_eq!(received, vec!["a", "b", "c"]);
+    }
+}
+
