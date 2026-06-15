@@ -98,3 +98,82 @@ nura-manager
 `nura-manager` opens the journal at `/data/journal` on startup. If the
 directory cannot be created (e.g. read-only rootfs in early boot) the manager
 falls back to writing service output directly to its own stdout with a warning.
+
+## Severity routing
+
+The `journal.NewRouter` function returns a `slog.Handler` that implements
+severity-based routing:
+
+| Destination | Minimum priority |
+|-------------|-----------------|
+| Journal     | debug (all)      |
+| Console     | warning          |
+
+This means the console only shows actionable messages while the journal retains
+the full debug trace for post-mortem analysis.
+
+```go
+handler := journal.NewRouter(jw, os.Stdout, "nura-manager")
+log := slog.New(handler)
+```
+
+When the journal is unavailable (`jw == nil`), the router falls back to a
+plain text handler at Info level so no messages are lost.
+
+## Flood rate limiting
+
+Services that emit more than `defaultLogRatePerSec` (200) lines per second
+have the excess silently dropped at the `Writer` level. The per-service
+limit is implemented via a sliding one-second token bucket.
+
+```go
+limiter := journal.NewFloodLimiter(200)
+jw.SetLimiter(limiter)
+```
+
+Records from other services are unaffected; each service has its own bucket.
+
+## Secret redaction
+
+The `Redact` function masks common secret patterns before records leave the
+system (used by the forwarder). Patterns cover:
+
+- `password=`, `secret=`, `token=`, `api_key=`, `apikey=`, `auth_key=`,
+  `credential=` assignments (case-insensitive)
+- `Bearer <token>` in Authorization headers
+
+The key name is preserved; only the value is replaced with `[REDACTED]`.
+
+```go
+redacted := journal.Redact(msg, journal.DefaultRedactPatterns)
+```
+
+Custom patterns can be substituted via `ForwardConfig.RedactPatterns`.
+
+## Remote forwarding
+
+Log forwarding is opt-in and disabled by default. Enable it by setting the
+`NURA_FORWARD_URL` environment variable before starting `nura-manager`:
+
+```
+# UDP syslog (RFC 5424) to a remote collector
+NURA_FORWARD_URL=udp://syslog.internal:514
+
+# HTTP/HTTPS JSON POST to an aggregator or OTLP-compatible receiver
+NURA_FORWARD_URL=https://logs.example.com/ingest
+```
+
+Only Warning-and-above records are forwarded. Records are redacted with
+`DefaultRedactPatterns` before transmission.
+
+### Kill switch
+
+Forwarding can be disabled at runtime by either:
+
+1. Creating the file `/data/journal/no-forward` on the running system.
+   The forwarder detects it on the next record and stops permanently.
+
+2. Calling `(*Forwarder).Kill()` programmatically.
+
+Neither method restarts forwarding until the process is restarted with a new
+`Forwarder` instance.
