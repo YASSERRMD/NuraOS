@@ -33,20 +33,15 @@ Guidelines:\n\
 // ---------------------------------------------------------------------------
 
 /// Verbosity level for the agent's text responses.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Verbosity {
     /// Single-sentence or brief-paragraph answers.
     Concise,
     /// Standard paragraph-length answers (default).
+    #[default]
     Normal,
     /// Detailed answers with explanations and examples.
     Verbose,
-}
-
-impl Default for Verbosity {
-    fn default() -> Self {
-        Verbosity::Normal
-    }
 }
 
 impl std::str::FromStr for Verbosity {
@@ -169,7 +164,6 @@ fn load_from_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     fn write_tmp(content: &str) -> (tempfile::TmpFile, PathBuf) {
         let dir = std::env::temp_dir();

@@ -27,8 +27,7 @@ pub fn estimate_tokens(msg: &Message) -> u32 {
         })
         .sum();
 
-    // ceil(chars / 4) + 4 overhead
-    ((char_count + 3) / 4 + 4) as u32
+    (char_count.div_ceil(4) + 4) as u32
 }
 
 /// Sum token estimates for a slice of messages.
