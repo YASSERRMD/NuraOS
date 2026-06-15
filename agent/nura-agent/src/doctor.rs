@@ -4,6 +4,8 @@ use nura_core::config::Config;
 use nura_core::secrets::Secrets;
 use nura_core::version;
 
+use crate::registry::{ProbeResult, ProviderRegistry};
+
 struct Check {
     label: &'static str,
     result: Result<String, String>,
@@ -44,6 +46,7 @@ pub fn run() -> nura_core::error::Result<()> {
         check_model(),
         check_config(),
         check_secrets_redacted(),
+        check_provider_registry(),
     ];
 
     let mut failures = 0;
@@ -170,6 +173,45 @@ fn check_secrets_redacted() -> Check {
             }
         }
         Err(e) => Check::fail("secrets", e.to_string()),
+    }
+}
+
+fn check_provider_registry() -> Check {
+    let cfg = Config::load().unwrap_or_default();
+    let secrets = Secrets::load().unwrap_or_default();
+    let reg = ProviderRegistry::from_config(&cfg, &secrets);
+
+    if reg.is_empty() {
+        return Check::fail("provider registry", "no providers configured");
+    }
+
+    let probes = reg.probe_local_reachability();
+    let mut lines: Vec<String> = Vec::new();
+    let mut any_reachable = false;
+
+    for (entry, probe) in &probes {
+        let status = match probe {
+            ProbeResult::Reachable => {
+                any_reachable = true;
+                "up".to_string()
+            }
+            ProbeResult::Unreachable(reason) => format!("down ({})", reason),
+            ProbeResult::Skipped(msg) => {
+                any_reachable = true; // assume remote providers reachable if key present
+                format!("key present, {}", msg)
+            }
+        };
+        lines.push(format!("{}/{}: {}", entry.name, entry.tier, status));
+    }
+
+    let detail = lines.join("; ");
+    if !any_reachable {
+        Check::warn(
+            "provider registry",
+            format!("no provider reachable: {}", detail),
+        )
+    } else {
+        Check::pass("provider registry", detail)
     }
 }
 
