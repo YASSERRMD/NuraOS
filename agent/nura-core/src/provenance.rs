@@ -210,7 +210,7 @@ impl ProvenanceWriter {
             hash: hash.clone(),
         };
         let mut line = serde_json::to_string(&entry)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         line.push('\n');
         let bytes = line.as_bytes();
         self.file.write_all(bytes)?;
@@ -312,7 +312,6 @@ pub fn verify_chain(dir: impl AsRef<Path>) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
     fn tmp_dir() -> tempfile::TempDir {
         tempfile::tempdir().expect("tempdir")

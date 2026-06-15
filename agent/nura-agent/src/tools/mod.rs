@@ -7,7 +7,8 @@ use nura_core::tool::ToolRegistry;
 
 /// Register all built-in read-only tools and add them to the allowlist.
 ///
-/// Call once during agent boot, before the first turn is dispatched.
+/// Called from the agent `run` command once the tool registry is wired up.
+#[allow(dead_code)]
 pub fn register_all(registry: &mut ToolRegistry) {
     registry.register(system_info::SystemInfoTool);
     registry.allowlist("system.info");

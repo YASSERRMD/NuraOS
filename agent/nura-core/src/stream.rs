@@ -34,12 +34,6 @@ pub struct AggregatedOutput {
     pub timed_out: bool,
 }
 
-impl Default for StopReason {
-    fn default() -> Self {
-        StopReason::EndOfTurn
-    }
-}
-
 /// Drive a provider event stream to completion, enforcing a timeout and
 /// forwarding cancellation.
 ///

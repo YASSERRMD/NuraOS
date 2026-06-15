@@ -37,6 +37,7 @@ impl OpenAiCompatProvider {
     }
 
     /// Build from environment secrets. Returns `None` if no key is configured.
+    #[allow(dead_code)]
     pub fn from_secrets() -> Option<Self> {
         use nura_core::secrets::Secrets;
         let secrets = Secrets::load().ok()?;
@@ -362,7 +363,7 @@ impl Iterator for OpenAiStream {
                     let stop_reason = match reason {
                         "length" => StopReason::MaxTokens,
                         "tool_calls" => StopReason::ToolCall,
-                        "stop" | _ => StopReason::EndOfTurn,
+                        _ => StopReason::EndOfTurn,
                     };
                     self.done = true;
                     return Some(Ok(StreamEvent::done(stop_reason)));
