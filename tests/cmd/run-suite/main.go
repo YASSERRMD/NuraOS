@@ -28,6 +28,7 @@ import (
 	"github.com/yasserrmd/nuraos/tests/reporters"
 	agentcore "github.com/yasserrmd/nuraos/tests/suites/agent-core"
 	buildandboot "github.com/yasserrmd/nuraos/tests/suites/build-and-boot"
+	providers "github.com/yasserrmd/nuraos/tests/suites/providers"
 )
 
 func main() {
@@ -83,6 +84,7 @@ var suiteRegistry = map[string]SuiteFunc{
 	"smoke":          runSmokeFunc,
 	"build-and-boot": buildandboot.Run,
 	"agent-core":     agentcore.Run,
+	"providers":      providers.Run,
 }
 
 func availableSuites() []string {
