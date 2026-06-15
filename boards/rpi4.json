@@ -1,0 +1,14 @@
+{
+  "id": "rpi4",
+  "name": "Raspberry Pi 4 Model B",
+  "arch": "aarch64",
+  "cpu": "cortex-a72",
+  "cpu_flags": ["-DGGML_NATIVE=OFF", "-DGGML_NEON=ON"],
+  "min_ram_mb": 2048,
+  "recommended_ram_mb": 4096,
+  "vcpus": 4,
+  "storage": "sd-card",
+  "machine": "raspi4b",
+  "accel": "native",
+  "notes": "Cortex-A72, NEON SIMD. 4 GB RAM variant recommended. Boot via U-Boot + ext4 rootfs on SD card."
+}

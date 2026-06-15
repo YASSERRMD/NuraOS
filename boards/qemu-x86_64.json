@@ -1,0 +1,14 @@
+{
+  "id": "qemu-x86_64",
+  "name": "QEMU x86-64 (development / CI)",
+  "arch": "x86_64",
+  "cpu": "qemu64",
+  "cpu_flags": ["-DGGML_NATIVE=OFF", "-DGGML_AVX=ON", "-DGGML_AVX2=OFF"],
+  "min_ram_mb": 512,
+  "recommended_ram_mb": 2048,
+  "vcpus": 2,
+  "storage": "virtio-blk",
+  "machine": "q35",
+  "accel": "tcg",
+  "notes": "Software emulation; no KVM required. Default target for dev and CI."
+}
