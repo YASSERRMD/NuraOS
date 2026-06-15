@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use nura_core::config::Config;
+use nura_core::secrets::Secrets;
 use nura_core::version;
 
 struct Check {
@@ -40,6 +42,8 @@ pub fn run() {
         check_data_dirs(),
         check_llama_server(),
         check_model(),
+        check_config(),
+        check_secrets_redacted(),
     ];
 
     let mut failures = 0;
@@ -119,6 +123,49 @@ fn check_llama_server() -> Check {
         Check::pass("llama-server", "found at /sbin/llama-server")
     } else {
         Check::warn("llama-server", "not installed yet (Phase 16)")
+    }
+}
+
+fn check_config() -> Check {
+    match Config::load() {
+        Ok(cfg) => {
+            let errs = cfg.validate();
+            if errs.is_empty() {
+                Check::pass(
+                    "config",
+                    format!("provider={} port={}", cfg.provider.active, cfg.server.port),
+                )
+            } else {
+                Check::fail("config", errs.join("; "))
+            }
+        }
+        Err(e) => Check::fail("config", e.to_string()),
+    }
+}
+
+fn check_secrets_redacted() -> Check {
+    match Secrets::load() {
+        Ok(s) => {
+            let mut present = Vec::new();
+            if s.anthropic_api_key.is_some() {
+                present.push("anthropic_api_key");
+            }
+            if s.openai_api_key.is_some() {
+                present.push("openai_api_key");
+            }
+            if s.gateway_token.is_some() {
+                present.push("gateway_token");
+            }
+            if present.is_empty() {
+                Check::pass("secrets", "none configured (local-only mode)")
+            } else {
+                Check::pass(
+                    "secrets",
+                    format!("present: {} (values redacted)", present.join(", ")),
+                )
+            }
+        }
+        Err(e) => Check::fail("secrets", e.to_string()),
     }
 }
 
