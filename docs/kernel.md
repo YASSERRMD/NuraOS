@@ -76,11 +76,45 @@ Config fragment: [kernel/configs/nuraos_x86_64_defconfig](../kernel/configs/nura
 | CONFIG_NETFILTER   | no firewall needed at this stage                |
 | CONFIG_SCSI        | virtio-blk does not need SCSI layer             |
 
+## Hardening options (Phase 40)
+
+The following security hardening options are added in the Phase 40 pass.
+They are part of the same config fragment and require no separate step.
+
+| Option                       | Effect                                                         |
+|------------------------------|----------------------------------------------------------------|
+| STRICT_KERNEL_RWX            | Kernel text is R-X, data is RW- (no W+X pages)               |
+| RANDOMIZE_BASE + MEMORY      | KASLR: randomize kernel and physical-memory load addresses     |
+| STACKPROTECTOR_STRONG        | Per-function stack canary via GCC `-fstack-protector-strong`  |
+| FORTIFY_SOURCE               | Replace unsafe C string ops with bounds-checked versions       |
+| SLAB_FREELIST_HARDENED       | Randomize slab freelist; detect double-free                    |
+| HARDENED_USERCOPY            | Validate every kernel-to/from-userspace copy size             |
+| INIT_ON_ALLOC_DEFAULT_ON     | Zero-initialize all kernel allocations (mitigates info leaks) |
+| SHUFFLE_PAGE_ALLOCATOR       | Randomize page-allocator freelist order                        |
+| RETPOLINE + CPU_IBPB_ENTRY   | Spectre v2 mitigation via retpoline and IBPB entry barriers   |
+| SECCOMP + SECCOMP_FILTER     | Allow processes to install BPF syscall filters                |
+| PROC_KCORE=n                 | Disable /proc/kcore (no raw physical memory access)           |
+| SECURITY_DMESG_RESTRICT      | Restrict dmesg to CAP_SYSLOG / privileged processes           |
+| USER_NS=n                    | Disable user namespaces (no container workloads)              |
+| BUG_ON_DATA_CORRUPTION       | Kernel panic on detected data corruption                      |
+
+### Hardening trade-offs
+
+- **INIT_ON_ALLOC_DEFAULT_ON** adds ~1-3% overhead on allocation-heavy paths.
+  Acceptable for an appliance running a single-tenant workload.
+- **KASLR** requires a small entropy source at boot; QEMU provides sufficient
+  entropy via the virtio-rng device (add `-device virtio-rng-pci` to QEMU args
+  for production use; not required in the current run-qemu.sh test config).
+- **USER_NS=n** prevents unprivileged namespace abuse (CVE-2020-8835 class).
+  If a future phase needs containers, re-enable and add seccomp profiles.
+- **SECCOMP_FILTER** is needed for the gateway process in a future seccomp
+  profile (Phase 41). Having it in the kernel now costs nothing.
+
 ## Build
 
 ```sh
 ./scripts/fetch-kernel.sh    # Download and verify
-./scripts/kernel-config.sh   # Apply NuraOS defconfig
+./scripts/kernel-config.sh   # Apply NuraOS defconfig (includes hardening)
 ./scripts/build-kernel.sh    # Produce bzImage
 ```
 

@@ -73,6 +73,49 @@ CONFIG_POSIX_TIMERS=y
 # ----- Modules: disabled -----
 CONFIG_MODULES=n
 
+# ----- Kernel hardening (Phase 40) -----
+# Memory: enforce R^X on kernel text and data pages.
+CONFIG_STRICT_KERNEL_RWX=y
+
+# KASLR: randomize kernel load address to frustrate ROP chains.
+CONFIG_RANDOMIZE_BASE=y
+CONFIG_RANDOMIZE_MEMORY=y
+
+# Stack: add a strong per-function canary (GCC -fstack-protector-strong).
+CONFIG_STACKPROTECTOR=y
+CONFIG_STACKPROTECTOR_STRONG=y
+
+# Compiler fortification: replace unsafe string ops with checked versions.
+CONFIG_FORTIFY_SOURCE=y
+
+# Heap: harden slab freelist linkage and validate copies at every boundary.
+CONFIG_SLAB_FREELIST_HARDENED=y
+CONFIG_HARDENED_USERCOPY=y
+
+# Init memory to zero on alloc to reduce uninitialized-read leaks.
+CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
+
+# Shuffle page allocator free-list to randomize heap layout.
+CONFIG_SHUFFLE_PAGE_ALLOCATOR=y
+
+# Spectre / Meltdown mitigations: retpoline + microcode-based barriers.
+CONFIG_RETPOLINE=y
+CONFIG_CPU_IBPB_ENTRY=y
+
+# Seccomp: allow processes to install BPF syscall filters (used by gateway).
+CONFIG_SECCOMP=y
+CONFIG_SECCOMP_FILTER=y
+
+# Disable /proc/kcore and restrict dmesg to privileged processes.
+CONFIG_PROC_KCORE=n
+CONFIG_SECURITY_DMESG_RESTRICT=y
+
+# Disable user namespaces to reduce attack surface (no container use case).
+CONFIG_USER_NS=n
+
+# Panic on data corruption detected by the kernel.
+CONFIG_BUG_ON_DATA_CORRUPTION=y
+
 # ----- Debug: off -----
 CONFIG_DEBUG_KERNEL=n
 CONFIG_DEBUG_INFO=n
