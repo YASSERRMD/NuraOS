@@ -1,7 +1,8 @@
 // Package main is the nura-gateway HTTP service.
 //
 // It fronts the Rust nura-agent for off-box access. Phase 28 ships
-// /healthz and /version; Phase 29 adds /chat (SSE) and /tools.
+// /healthz and /version; Phase 29 adds /chat (SSE) and /tools;
+// Phase 30 adds auth, rate limiting, and loopback-only binding.
 package main
 
 import (
@@ -31,6 +32,19 @@ func main() {
 		port = defaultPort
 	}
 
+	// Bind policy: loopback-only by default; LAN requires explicit opt-in.
+	host := "127.0.0.1"
+	if os.Getenv("GATEWAY_BIND_LAN") == "1" {
+		host = "0.0.0.0"
+		slog.Warn("LAN bind enabled; gateway is accessible from the network")
+	}
+
+	// Optional bearer-token auth loaded from secrets file.
+	token := loadGatewayToken(defaultSecretsPath)
+	if token != "" {
+		slog.Info("gateway auth enabled")
+	}
+
 	h := newHandlers(agentSocket)
 
 	mux := http.NewServeMux()
@@ -39,12 +53,29 @@ func main() {
 	mux.HandleFunc("POST /chat", h.chat)
 	mux.HandleFunc("GET /tools", h.tools)
 
-	addr := "0.0.0.0:" + port
-	slog.Info("nura-gateway starting", "addr", addr, "version", version)
+	rl := newRateLimiter(defaultRPS, defaultBurst)
+	sem := make(chan struct{}, maxConcurrent)
+
+	// Middleware chain (outermost first):
+	// security headers -> auth -> rate limit -> concurrency cap -> handler
+	var handler http.Handler = mux
+	handler = concurrencyMiddleware(handler, sem)
+	handler = rateLimitMiddleware(handler, rl)
+	handler = bearerAuthMiddleware(handler, token)
+	handler = securityHeadersMiddleware(handler)
+
+	addr := host + ":" + port
+	slog.Info("nura-gateway starting",
+		"addr", addr,
+		"version", version,
+		"auth_enabled", token != "",
+		"max_concurrent", maxConcurrent,
+		"rate_rps", defaultRPS,
+	)
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
