@@ -33,6 +33,22 @@ mount -t devtmpfs devtmpfs /dev || die "failed to mount /dev"
 [ -c /dev/zero ]    || mknod -m 666 /dev/zero c 1 5
 [ -c /dev/urandom ] || mknod -m 444 /dev/urandom c 1 9
 
+# ----- Early entropy seeding via virtio-rng -----
+# Feed 512 bytes from the hardware RNG into the kernel pool. This seeds the
+# CSPRNG before any crypto operations, including TLS in Go services.
+# virtio-rng is enabled with CONFIG_HW_RANDOM_VIRTIO=y and exposed as /dev/hwrng.
+if [ -c /dev/hwrng ]; then
+    if dd if=/dev/hwrng of=/dev/urandom bs=512 count=1 2>/dev/null; then
+        log "entropy: seeded kernel pool from virtio-rng (/dev/hwrng)"
+    else
+        warn "entropy: virtio-rng read failed; using accumulated entropy"
+    fi
+else
+    warn "entropy: /dev/hwrng not present (CONFIG_HW_RANDOM_VIRTIO not set or no virtio-rng device)"
+fi
+_avail=$(cat /proc/sys/kernel/random/entropy_avail 2>/dev/null || echo "?")
+log "entropy: ${_avail} bits available after early seed"
+
 # ----- mdev device manager -----
 # Register mdev as the kernel hotplug helper, then scan /sys to apply
 # permissions from /etc/mdev.conf and create symlinks for new devices.
@@ -224,6 +240,30 @@ else
     mount -t tmpfs tmpfs /data
     mkdir -p /data/models /data/logs /data/sessions /data/etc /data/journal
 fi
+
+# ----- Seed file: persist entropy across reboots -----
+# Load the persisted random seed from /data (if available) and immediately
+# refresh it so that each boot uses a unique seed. A stolen disk image cannot
+# replay a previous session's entropy state.
+SEED_FILE=/data/etc/random.seed
+if [ -f "${SEED_FILE}" ] && [ -s "${SEED_FILE}" ]; then
+    if dd if="${SEED_FILE}" of=/dev/urandom bs=512 count=2 2>/dev/null; then
+        log "entropy: loaded persisted seed from ${SEED_FILE}"
+    else
+        warn "entropy: failed to load persisted seed from ${SEED_FILE}"
+    fi
+fi
+# Refresh seed for next boot with fresh random bytes (not a copy of the loaded seed).
+if dd if=/dev/urandom bs=512 count=2 2>/dev/null > "${SEED_FILE}.new" && \
+   chmod 600 "${SEED_FILE}.new" && \
+   mv "${SEED_FILE}.new" "${SEED_FILE}"; then
+    log "entropy: seed refreshed at ${SEED_FILE}"
+else
+    warn "entropy: seed refresh failed (${SEED_FILE})"
+    rm -f "${SEED_FILE}.new" 2>/dev/null
+fi
+_avail=$(cat /proc/sys/kernel/random/entropy_avail 2>/dev/null || echo "?")
+log "entropy: ${_avail} bits available after seed file load"
 
 # ----- Bind persistent paths from /data -----
 # resolv.conf: restore from /data on boot; save current value there for next boot.
