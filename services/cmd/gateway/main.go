@@ -23,6 +23,7 @@ import (
 
 	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
+	"github.com/yasserrmd/nuraos/services/internal/entropy"
 	"github.com/yasserrmd/nuraos/services/internal/identity"
 )
 
@@ -41,6 +42,15 @@ const (
 )
 
 func main() {
+	// Verify the OS CSPRNG is seeded before any cryptographic operations.
+	// On Linux with virtio-rng, this returns immediately. Without hardware
+	// entropy, it waits up to 10 seconds and logs a warning if not ready.
+	slog.Info(entropy.Check())
+	if !entropy.WaitReady(10 * time.Second) {
+		slog.Warn("CSPRNG not seeded within 10s; crypto operations may block; " +
+			"ensure virtio-rng device is attached or persisted seed is loaded")
+	}
+
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {
 		port = defaultPort

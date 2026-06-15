@@ -4,6 +4,69 @@ NuraOS is designed as a local-first appliance running inside a QEMU VM on a
 trusted machine. This document describes the threat model, the protections in
 place, and guidance for safe LAN exposure.
 
+## Entropy model
+
+Cryptographic operations require a seeded CSPRNG. NuraOS ensures the kernel
+pool is seeded before any service starts by combining two entropy sources:
+
+### Sources
+
+| Source | When available | Amount fed |
+|--------|---------------|------------|
+| virtio-rng (`/dev/hwrng`) | QEMU with `-device virtio-rng-pci` | 512 bytes at `/init` start |
+| Persisted seed (`/data/etc/random.seed`) | After first boot | 1 KiB per boot |
+
+**virtio-rng** (primary): The QEMU host generates random bytes from its OS
+entropy pool and forwards them to the guest via the virtio bus. This provides
+good entropy immediately at boot, before any disk I/O.
+
+**Persisted seed** (secondary): After `/data` is mounted, `/init` loads
+`/data/etc/random.seed` into the kernel pool. The seed is immediately refreshed
+with new random bytes so each boot uses a unique seed. An attacker with a copy
+of the disk image cannot replay entropy state from a previous boot.
+
+### Service startup gate
+
+The gateway (`nura-gateway`) calls `entropy.WaitReady(10s)` at startup. On a
+system with virtio-rng, this returns immediately. If the CSPRNG is not seeded
+within 10 seconds, a warning is logged and the gateway proceeds (Go's crypto
+primitives will still block internally until the pool is seeded).
+
+Go's `crypto/rand.Read` uses `getrandom(2)` with flag 0, which blocks until
+the kernel CSPRNG is initialised. No NuraOS service calls `getrandom(GRND_NONBLOCK)`
+or reads from `/dev/urandom` before the pool is ready.
+
+### Entropy availability check
+
+The `/proc/sys/kernel/random/entropy_avail` counter is logged at two points:
+- After the virtio-rng feed in `/init`
+- After the persisted seed is loaded
+
+These log lines allow diagnosis of entropy starvation at boot time:
+```
+[init] entropy: 4096 bits available after early seed
+[init] entropy: 4096 bits available after seed file load
+```
+
+### Kernel configuration
+
+```
+CONFIG_HW_RANDOM=y
+CONFIG_HW_RANDOM_VIRTIO=y
+```
+
+### QEMU launch argument
+
+Ensure the virtio-rng device is included in the QEMU launch command:
+```sh
+-device virtio-rng-pci
+```
+
+Without this device, the guest has no hardware entropy source and relies solely
+on the persisted seed and accumulated I/O noise.
+
+---
+
 ## Threat model
 
 **In scope (protected)**:
