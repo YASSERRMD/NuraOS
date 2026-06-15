@@ -14,6 +14,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/agent"
 	"github.com/yasserrmd/nuraos/services/internal/cgroup"
 	"github.com/yasserrmd/nuraos/services/internal/diskmon"
+	"github.com/yasserrmd/nuraos/services/internal/integrity"
 )
 
 // chatBufPool recycles 4 KiB read buffers across SSE proxy iterations.
@@ -475,9 +476,35 @@ func (h *handlers) statusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	components = append(components, agentComp)
 
+	// Boot integrity status (written by initramfs init at startup).
+	integComp := agent.StatusComponent{Name: "integrity"}
+	if intStatus, ok := integrity.ReadStatus(integrity.DefaultStatusPath); ok {
+		switch intStatus.Result {
+		case "pass":
+			integComp.Status = "ok"
+			integComp.Detail = "boot hashes verified"
+		case "fail":
+			integComp.Status = "degraded"
+			integComp.Detail = "boot hash mismatch"
+			if intStatus.Detail != "" {
+				integComp.Detail += ": " + intStatus.Detail
+			}
+		case "skipped":
+			integComp.Status = "ok"
+			integComp.Detail = "verification skipped (no manifest)"
+		default:
+			integComp.Status = "unknown"
+			integComp.Detail = intStatus.Detail
+		}
+	} else {
+		integComp.Status = "unknown"
+		integComp.Detail = "status not available"
+	}
+	components = append(components, integComp)
+
 	overall := "ok"
 	for _, c := range components {
-		if c.Status != "ok" {
+		if c.Status == "degraded" {
 			overall = "degraded"
 			break
 		}

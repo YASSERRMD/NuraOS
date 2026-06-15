@@ -302,6 +302,38 @@ else
     cp /etc/resolv.conf /data/etc/resolv.conf 2>/dev/null || true
 fi
 
+# ----- Boot integrity verification -----
+# Check SHA-256 hashes of key files against /data/etc/boot-hashes (sha256sum
+# compatible format). A signed boot manifest at /data/etc/boot-manifest.json
+# ties this hash list to an Ed25519 key; the Go runtime performs the full
+# signature check. The shell check here is the first line of defence.
+#
+# Fail-closed: a hash mismatch drops to a recovery shell before the supervisor
+# is started. To bypass verification, boot with nura.recovery=1 (the recovery
+# check above fires first and skips the rest of init entirely).
+BOOT_HASHES=/data/etc/boot-hashes
+INTEGRITY_STATUS=/run/nura-integrity-status
+_INOW=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)
+
+if [ -f "${BOOT_HASHES}" ]; then
+    log "integrity: verifying boot hashes from ${BOOT_HASHES} ..."
+    if sha256sum -c "${BOOT_HASHES}" >/dev/null 2>&1; then
+        log "integrity: PASS -- all entries verified"
+        printf '{"result":"pass","timestamp":"%s"}\n' "${_INOW}" > "${INTEGRITY_STATUS}"
+    else
+        log "integrity: FAIL -- SHA-256 mismatch"
+        printf '{"result":"fail","timestamp":"%s","detail":"sha256 mismatch in boot-hashes"}\n' \
+            "${_INOW}" > "${INTEGRITY_STATUS}"
+        warn "boot integrity check FAILED; dropping to recovery shell"
+        warn "inspect: sha256sum -c ${BOOT_HASHES}"
+        warn "to skip: reboot with nura.recovery=1 on the kernel cmdline"
+        exec sh
+    fi
+else
+    log "integrity: no boot-hashes at ${BOOT_HASHES}; verification skipped"
+    printf '{"result":"skipped","timestamp":"%s"}\n' "${_INOW}" > "${INTEGRITY_STATUS}"
+fi
+
 # ----- Least-privilege setup -----
 # Per-service ownership: each service owns only the dirs it writes to.
 # UIDs: nura-mgr=100, nura=1000, nura-gw=1001, llama=1002

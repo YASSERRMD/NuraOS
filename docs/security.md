@@ -760,3 +760,101 @@ happen in the forked child before exec without needing CAP_SETUID in the boundin
 | cap_perfmon | 38 | Use perf_event_open; kernel performance monitoring |
 | cap_bpf | 39 | Load privileged BPF programs |
 | cap_checkpoint_restore | 40 | Checkpoint/restore process state (CRIU) |
+
+---
+
+## Boot Integrity Chain
+
+NuraOS implements a two-layer integrity check to detect tampering with the
+kernel, initramfs, or rootfs images before the supervisor starts.
+
+### Layer 1: SHA-256 hash check (shell, early boot)
+
+The initramfs `init` script checks `/data/etc/boot-hashes` -- a
+sha256sum-compatible file -- before starting the supervisor. Each line has the
+format:
+
+```
+<sha256hex>  /absolute/path/to/file
+```
+
+If any file's hash does not match, init drops to a recovery shell instead of
+starting the supervisor. This is a **fail-closed** behaviour: a tampered system
+does not boot into normal operation.
+
+Verification status is written to `/run/nura-integrity-status` as JSON:
+
+```json
+{"result":"pass","timestamp":"2026-06-15T12:00:00Z"}
+```
+
+Possible results: `pass`, `fail`, `skipped` (no manifest found), `unknown`.
+
+### Layer 2: Ed25519 signature check (Go runtime)
+
+The Go package `services/internal/integrity` provides `VerifyManifest`, which:
+
+1. Reads `boot-manifest.json` (JSON with `schema`, `timestamp`, `slot`, `entries`).
+2. Verifies the Ed25519 signature from `boot-manifest.sig` (base64 raw signature).
+3. Re-checks each entry's SHA-256.
+
+The manifest is tied to the signing key; a compromised hash file without a
+valid signature is detected at runtime.
+
+The gateway `/status` endpoint includes an `integrity` component showing the
+result of the shell check:
+
+```json
+{
+  "name": "integrity",
+  "status": "ok",
+  "detail": "boot hashes verified"
+}
+```
+
+If the result is `fail`, the gateway returns HTTP 503 and marks `overall=degraded`.
+
+### Generating and deploying a manifest
+
+1. Generate an Ed25519 keypair (if you do not have one already). The same keypair
+   used for package signing works here; see `docs/packages.md`.
+
+2. Run `scripts/sign-rootfs.sh` to generate the manifest and hash file:
+
+```sh
+./scripts/sign-rootfs.sh \
+    --key "$(cat /etc/nura/boot.priv.hex)" \
+    --slot a \
+    image/out/bzImage \
+    image/out/initramfs.cpio.gz
+```
+
+3. Deploy the output files to `/data/etc/` on the target:
+   - `boot-manifest.json`
+   - `boot-manifest.sig`
+   - `boot-hashes`
+
+4. On the next boot, `init` checks all listed hashes and writes the result to
+   `/run/nura-integrity-status`.
+
+### Recovery procedure
+
+If the integrity check fails and the system is locked in the recovery shell:
+
+1. Boot with `nura.recovery=1` on the kernel cmdline (selectable from the
+   extlinux boot menu).
+2. Inspect which file failed: `sha256sum -c /data/etc/boot-hashes`.
+3. If the file is legitimately changed (e.g. a new update was applied but the
+   manifest was not regenerated), re-run `sign-rootfs.sh` and deploy the new
+   manifest before the next normal boot.
+4. If the mismatch is unexpected, treat the system as compromised: use the
+   update system to restore a known-good image and regenerate the manifest.
+
+### dm-verity (optional, advanced)
+
+For runtime rootfs protection against block-level tampering, the Linux kernel's
+dm-verity subsystem can be used when `CONFIG_DM_VERITY=y` is set. dm-verity
+computes a hash tree over all blocks of the rootfs ext4 image and verifies each
+block on read. A corrupted block causes an I/O error rather than silent data
+corruption. See `docs/updates.md` for the A/B rootfs slot layout that
+dm-verity would apply to.
