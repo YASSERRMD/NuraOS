@@ -4,6 +4,16 @@ use nura_core::secrets::Secrets;
 
 use crate::providers::local::{LocalProvider, DEFAULT_BASE_URL as LOCAL_BASE_URL};
 
+// Environment variables that opt-in to sovereign/self-hosted providers.
+const ENV_OLLAMA: &str = "NURA_OLLAMA";
+const ENV_OLLAMA_MODEL: &str = "NURA_OLLAMA_MODEL";
+const ENV_LM_STUDIO: &str = "NURA_LMSTUDIO";
+const ENV_LM_STUDIO_MODEL: &str = "NURA_LMSTUDIO_MODEL";
+/// Arbitrary OpenAI-compatible endpoint: NURA_CUSTOM_ENDPOINT=http://host:port
+const ENV_CUSTOM_ENDPOINT: &str = "NURA_CUSTOM_ENDPOINT";
+/// Model name for the custom endpoint.
+const ENV_CUSTOM_MODEL: &str = "NURA_CUSTOM_MODEL";
+
 /// Summary of one registered provider, used by doctor and boot validation.
 #[derive(Debug)]
 pub struct ProviderEntry {
@@ -87,6 +97,70 @@ impl ProviderRegistry {
                 entries.push((
                     ProviderEntry {
                         name: "openai".into(),
+                        is_local: false,
+                        capabilities: p.capabilities(),
+                        tier: ProviderTier::Cloud,
+                    },
+                    Box::new(p),
+                ));
+            }
+        }
+
+        // ---- sovereign / self-hosted OpenAI-compatible providers ----
+        // These are registered when opt-in env vars are set.
+        #[cfg(feature = "remote-providers")]
+        {
+            use crate::providers::OpenAiCompatProvider;
+            use crate::providers::openai::{
+                OLLAMA_BASE_URL, OLLAMA_DEFAULT_MODEL,
+                LM_STUDIO_BASE_URL, LM_STUDIO_DEFAULT_MODEL,
+            };
+
+            // Ollama: NURA_OLLAMA=1 enables; NURA_OLLAMA_MODEL overrides model.
+            if std::env::var(ENV_OLLAMA).as_deref() == Ok("1") {
+                let model = std::env::var(ENV_OLLAMA_MODEL)
+                    .unwrap_or_else(|_| OLLAMA_DEFAULT_MODEL.into());
+                let p = OpenAiCompatProvider::new(None::<String>, OLLAMA_BASE_URL, model);
+                entries.push((
+                    ProviderEntry {
+                        name: "ollama".into(),
+                        is_local: true,
+                        capabilities: p.capabilities(),
+                        tier: ProviderTier::Local,
+                    },
+                    Box::new(p),
+                ));
+            }
+
+            // LM Studio: NURA_LMSTUDIO=1 enables; NURA_LMSTUDIO_MODEL overrides.
+            if std::env::var(ENV_LM_STUDIO).as_deref() == Ok("1") {
+                let model = std::env::var(ENV_LM_STUDIO_MODEL)
+                    .unwrap_or_else(|_| LM_STUDIO_DEFAULT_MODEL.into());
+                let p = OpenAiCompatProvider::new(None::<String>, LM_STUDIO_BASE_URL, model);
+                entries.push((
+                    ProviderEntry {
+                        name: "lm-studio".into(),
+                        is_local: true,
+                        capabilities: p.capabilities(),
+                        tier: ProviderTier::Local,
+                    },
+                    Box::new(p),
+                ));
+            }
+
+            // Custom endpoint: NURA_CUSTOM_ENDPOINT=http://host:port
+            if let Ok(base_url) = std::env::var(ENV_CUSTOM_ENDPOINT) {
+                let model = std::env::var(ENV_CUSTOM_MODEL)
+                    .unwrap_or_else(|_| "custom".into());
+                // Custom endpoints may not need a key; pass secrets.openai_api_key
+                // as a fallback for endpoints that require one.
+                let key = secrets.openai_api_key
+                    .as_ref()
+                    .map(|s| s.expose().to_string());
+                let p = OpenAiCompatProvider::new(key, &base_url, model);
+                entries.push((
+                    ProviderEntry {
+                        name: "custom".into(),
                         is_local: false,
                         capabilities: p.capabilities(),
                         tier: ProviderTier::Cloud,

@@ -12,6 +12,17 @@ pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 const MAX_RETRIES: u32 = 3;
 
+/// Ollama's default local API endpoint (no API key required).
+pub const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
+/// Default Ollama model (change via NURA_OLLAMA_MODEL or agent.toml).
+pub const OLLAMA_DEFAULT_MODEL: &str = "llama3";
+
+/// LM Studio's default local API endpoint.
+pub const LM_STUDIO_BASE_URL: &str = "http://127.0.0.1:1234";
+/// LM Studio does not enforce a specific model name; "local-model" is a
+/// placeholder that LM Studio ignores (it uses the loaded model).
+pub const LM_STUDIO_DEFAULT_MODEL: &str = "local-model";
+
 /// OpenAI-compatible chat completions provider.
 ///
 /// Works with OpenAI, vLLM, LiteLLM, and any endpoint that implements the

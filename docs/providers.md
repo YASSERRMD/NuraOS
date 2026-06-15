@@ -130,12 +130,15 @@ The agent exits at boot with code 2 if the registry is empty.
 
 ## Registered Providers
 
-| Name | Phase | Tier | Backend |
-|------|-------|------|---------|
-| `stub` | 15 | local | Echo stub, tests only |
-| `local` | 17 | local | llama-server over 127.0.0.1 |
-| `anthropic` | 18 | cloud | Anthropic Messages API |
-| `openai` | 19 | cloud | OpenAI Chat Completions API |
+| Name | Tier | Opt-in | Backend |
+|---|---|---|---|
+| `local` | local | always | llama-server on 127.0.0.1:8081 |
+| `anthropic` | cloud | `remote-providers` feature + key | Anthropic Messages API |
+| `openai` | cloud | `remote-providers` feature + key | OpenAI Chat Completions API |
+| `ollama` | local | `NURA_OLLAMA=1` | Ollama on 127.0.0.1:11434 |
+| `lm-studio` | local | `NURA_LMSTUDIO=1` | LM Studio on 127.0.0.1:1234 |
+| `custom` | cloud | `NURA_CUSTOM_ENDPOINT=http://...` | Any OpenAI-compatible endpoint |
+| `llama-ffi` | local | `llama-ffi` Cargo feature | Direct llama.cpp FFI (skeleton) |
 
 The active provider is selected by `provider.active` in `agent.toml`
 (see [config.md](config.md)). When the named provider is not registered
@@ -198,6 +201,46 @@ base_url = "https://api.anthropic.com"  # default; omit for standard endpoint
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Ollama (sovereign, local)
+
+```sh
+export NURA_OLLAMA=1
+export NURA_OLLAMA_MODEL=llama3   # optional; defaults to llama3
+```
+
+Ollama must be running on `127.0.0.1:11434`. No API key required.
+Switch the active provider in `agent.toml`:
+
+```toml
+[provider]
+active = "ollama"
+```
+
+### LM Studio (sovereign, local)
+
+```sh
+export NURA_LMSTUDIO=1
+export NURA_LMSTUDIO_MODEL=local-model   # optional
+```
+
+LM Studio must be running on `127.0.0.1:1234`. No API key required.
+
+### Custom OpenAI-compatible endpoint
+
+```sh
+export NURA_CUSTOM_ENDPOINT=http://my-inference-server:8000
+export NURA_CUSTOM_MODEL=my-model-name   # optional
+```
+
+The `custom` provider uses the `openai_api_key` from secrets.toml as
+an Authorization header if present. Omit the key for unauthenticated
+endpoints (e.g. private vLLM or LiteLLM with no auth).
+
+```toml
+[provider]
+active = "custom"
 ```
 
 ### Local (llama.cpp, offline)
