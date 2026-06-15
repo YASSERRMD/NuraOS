@@ -1,0 +1,41 @@
+#!/bin/sh
+# udhcpc default script for NuraOS.
+# Called by udhcpc with $1=bound|renew|deconfig|leasefail.
+
+RESOLV_CONF="/etc/resolv.conf"
+
+case "$1" in
+    bound|renew)
+        [ -n "${interface}" ] || exit 1
+        [ -n "${ip}" ]        || exit 1
+
+        ip addr flush dev "${interface}" 2>/dev/null
+        ip addr add "${ip}${subnet:+/${subnet}}" dev "${interface}"
+        ip link set "${interface}" up
+
+        if [ -n "${router}" ]; then
+            ip route del default 2>/dev/null || true
+            for gw in ${router}; do
+                ip route add default via "${gw}" dev "${interface}"
+                break
+            done
+        fi
+
+        if [ -n "${dns}" ]; then
+            printf '' > "${RESOLV_CONF}"
+            for server in ${dns}; do
+                printf 'nameserver %s\n' "${server}" >> "${RESOLV_CONF}"
+            done
+        fi
+
+        if [ -n "${domain}" ]; then
+            printf 'search %s\n' "${domain}" >> "${RESOLV_CONF}"
+        fi
+        ;;
+    deconfig)
+        ip addr flush dev "${interface}" 2>/dev/null || true
+        ;;
+    leasefail|nak)
+        echo "[udhcpc] failed to obtain lease on ${interface}" >&2
+        ;;
+esac

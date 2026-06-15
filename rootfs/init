@@ -48,12 +48,14 @@ log "bringing up loopback ..."
 ip link set lo up 2>/dev/null || warn "failed to bring up loopback"
 
 log "bringing up eth0 (DHCP) ..."
+UDHCPC_SCRIPT=/etc/udhcpc/default.script
 ip link set eth0 up 2>/dev/null && \
-    udhcpc -i eth0 -q -n -t 5 2>/dev/null && \
+    udhcpc -i eth0 -q -n -t 5 \
+        ${UDHCPC_SCRIPT:+-s "${UDHCPC_SCRIPT}"} 2>/dev/null && \
     log "eth0: DHCP OK" || warn "eth0 DHCP failed; continuing without network"
 
 # Write a minimal resolv.conf if DHCP did not create one.
-[ -f /etc/resolv.conf ] || printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+[ -f /etc/resolv.conf ] || printf 'nameserver 10.0.2.3\nnameserver 8.8.8.8\n' > /etc/resolv.conf
 
 # ----- /data persistent partition -----
 DATA_DEV=""

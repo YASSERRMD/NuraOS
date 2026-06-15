@@ -66,6 +66,13 @@ devtmpfs /dev   devtmpfs defaults  0 0
 tmpfs    /tmp   tmpfs    defaults  0 0
 EOF
 
+# udhcpc DHCP client script.
+UDHCPC_SCRIPT="${REPO_ROOT}/rootfs/etc/udhcpc/default.script"
+if [ -f "${UDHCPC_SCRIPT}" ]; then
+    mkdir -p "${STAGING}/etc/udhcpc"
+    install -m 755 "${UDHCPC_SCRIPT}" "${STAGING}/etc/udhcpc/default.script"
+fi
+
 # ----- /dev minimal nodes (backup if devtmpfs auto-populate fails) -----
 # These are created as regular files in the cpio; the kernel populates /dev
 # via devtmpfs at boot, but we add console/null as a failsafe.
