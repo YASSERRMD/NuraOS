@@ -23,3 +23,8 @@ memory_max = "0"
 type    = "http"
 url     = "http://127.0.0.1:8081/health"
 timeout = 120
+
+[namespaces]
+mount   = true
+ipc     = true
+uts     = true

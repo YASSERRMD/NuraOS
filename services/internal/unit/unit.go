@@ -66,6 +66,16 @@ type Readiness struct {
 	Timeout int           `toml:"timeout"`
 }
 
+// Namespaces configures which Linux namespaces to clone for this unit.
+// Defaults are all false (no namespace isolation beyond the inherited set).
+type Namespaces struct {
+	PID     bool `toml:"pid"`
+	Mount   bool `toml:"mount"`
+	IPC     bool `toml:"ipc"`
+	UTS     bool `toml:"uts"`
+	Network bool `toml:"network"`
+}
+
 // SocketActivation configures lazy-start socket activation for a unit.
 // When enabled the manager pre-opens the listen socket; the service is started
 // only when the first client connects. The socket fd is passed to the service
@@ -104,6 +114,8 @@ type Unit struct {
 	Readiness Readiness `toml:"readiness"`
 	// SocketActivation configures lazy socket-activated start.
 	SocketActivation SocketActivation `toml:"socket_activation"`
+	// Namespaces declares which Linux namespaces to clone on service start.
+	Namespaces Namespaces `toml:"namespaces"`
 	// Enabled controls whether the unit participates in the start plan.
 	Enabled bool `toml:"enabled"`
 }
