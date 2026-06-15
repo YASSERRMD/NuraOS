@@ -1,10 +1,12 @@
 pub mod config;
+pub mod context;
 pub mod error;
 pub mod logging;
 pub mod provider;
 pub mod repl;
 pub mod routing;
 pub mod secrets;
+pub mod session;
 pub mod stream;
 pub mod telemetry;
 pub mod tool;
