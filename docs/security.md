@@ -181,3 +181,37 @@ issuing the new one once the SIGHUP is confirmed via the log line:
 | Large request bodies | 64 KiB cap on POST /chat |
 | Slow-client attacks | `ReadTimeout: 10 s` on the HTTP server |
 | Path traversal in tools | `fs.read` rejects `..` components lexically |
+| Root process escape | nura-agent and gateway run as uid=1000 |
+
+## Least-privilege model (Phase 41)
+
+### Service accounts
+
+| Account | uid | gid | Shell        | Purpose                  |
+|---------|-----|-----|--------------|--------------------------|
+| root    | 0   | 0   | /bin/sh      | PID 1 supervisor only    |
+| nura    | 1000| 1000| /bin/false   | nura-agent and gateway   |
+
+The `nura` account has no login shell and no password. Only `root`
+(the supervisor) can `su` to it.
+
+### Ownership layout
+
+| Path           | Owner    | Mode | Notes                              |
+|----------------|----------|------|------------------------------------|
+| /run/          | nura     | 750  | Unix socket for IPC lives here     |
+| /data/logs/    | nura     | 750  | Service log files                  |
+| /data/sessions/| nura     | 750  | Conversation session data          |
+| /data/models/  | root     | 755  | Model files (read-only for nura)   |
+| /data/etc/     | root     | 755  | Config files (read-only for nura)  |
+| /sbin/         | root     | 755  | Binaries owned by root             |
+
+### Privilege drop sequence
+
+1. `/init` (root) mounts filesystems and sets up ownership via `chown 1000:1000`.
+2. The supervisor (root) starts each service via `su -s /bin/sh nura -c "exec /sbin/<svc>"`.
+3. `su` drops to uid=1000, gid=1000 before exec-ing the binary.
+4. Neither nura-agent nor gateway ever runs with any capabilities beyond what uid=1000 has.
+
+If `su` is absent or the `nura` account is missing at boot, services fall back
+to running as root with a logged warning.
