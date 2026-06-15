@@ -82,31 +82,90 @@ ci/             CI workflow sources
 See [docs/host-setup.md](docs/host-setup.md) for the full host prerequisite list
 and [docs/architecture.md](docs/architecture.md) for the system design.
 
-## Gateway API (v0.1)
+## Gateway API (v1.0)
 
 Once the image is booted and the port is forwarded to the host:
 
 ```sh
-# Health check (no auth needed)
-curl http://localhost:18080/healthz
+BASE=http://localhost:18080
 
-# View effective configuration
-curl http://localhost:18080/config
+# Health check
+curl $BASE/healthz
 
-# Chat (streaming SSE)
-curl -X POST http://localhost:18080/chat \
+# Chat -- streaming SSE
+curl -X POST $BASE/chat \
   -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"messages":[{"role":"user","parts":[{"type":"text","text":"Hello"}]}]}'
 
-# List available tools
-curl http://localhost:18080/tools
+# Effective configuration
+curl $BASE/config
+
+# Available tools
+curl $BASE/tools
 
 # Prometheus metrics
-curl http://localhost:18080/metrics
+curl $BASE/metrics
+
+# Health summary (all components)
+curl $BASE/status
+
+# Active model and installed models
+curl $BASE/models
+
+# A/B update slot state
+curl $BASE/update/status
+
+# Telemetry status (off by default)
+curl $BASE/telemetry/status
+
+# Hardware board info
+curl $BASE/board
 ```
 
-Add `-H "Authorization: Bearer YOUR_TOKEN"` to authenticated endpoints when a
+Add `-H "Authorization: Bearer YOUR_TOKEN"` to all endpoints when a
 `gateway_token` is configured in `/data/etc/secrets.toml`.
+
+### All endpoints
+
+| Endpoint | Method | Auth? | Description |
+|---|---|---|---|
+| `/healthz` | GET | yes | Agent + gateway liveness |
+| `/version` | GET | yes | Service and version string |
+| `/chat` | POST | yes | Streaming SSE inference turn |
+| `/tools` | GET | yes | List registered agent tools |
+| `/metrics` | GET | yes | Prometheus text counters |
+| `/status` | GET | yes | Human-readable health summary |
+| `/config` | GET | yes | Effective gateway config (no secrets) |
+| `/models` | GET | yes | Active model manifest + available GGUF list |
+| `/update/status` | GET | yes | A/B slot and last update state |
+| `/telemetry/status` | GET | yes | Telemetry enabled/disabled and last payload |
+| `/board` | GET | yes | Hardware board info |
+
+## Model management
+
+```sh
+# Download the default model
+bash scripts/fetch-model.sh
+
+# List installed models
+bash scripts/model-list.sh
+
+# Switch active model
+bash scripts/model-activate.sh <model-name> --quantization Q4_K_M
+```
+
+## A/B safe update
+
+```sh
+# Stage a new rootfs to the inactive slot
+bash scripts/update.sh --url https://example.com/nuraos.ext4 --sha256 <hex>
+
+# Activate and reboot
+bash scripts/slot-select.sh set b && reboot
+
+# Roll back if the update is bad
+bash scripts/update.sh --rollback && reboot
+```
 
 ## Provider configuration
 
@@ -116,8 +175,21 @@ Run the interactive setup helper to choose a provider and write secrets:
 ./scripts/configure.sh
 ```
 
-Supported providers: `local` (llama.cpp on-device), `anthropic`, `openai`.
+Supported providers: `local` (llama.cpp on-device), `anthropic`, `openai`,
+`ollama` (via `NURA_OLLAMA=1`), `lm-studio` (via `NURA_LMSTUDIO=1`),
+`custom` (via `NURA_CUSTOM_ENDPOINT=http://...`).
+
 Provider can be overridden per turn with `"provider": "anthropic"` in the chat body.
+
+## Smoke test
+
+```sh
+# Against a running gateway (default: localhost:8080)
+bash scripts/smoke-test.sh
+
+# Against a remote target
+bash scripts/smoke-test.sh --base-url http://192.168.1.100:8080 --token mytoken
+```
 
 ## Repository conventions
 
