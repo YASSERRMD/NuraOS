@@ -71,9 +71,9 @@ func buildFilter(nrs []uint32, defaultAction uint32) []syscall.SockFilter {
 	n := len(nrs)
 	for i, nr := range nrs {
 		// If this syscall matches, jump forward to the ALLOW instruction.
-		// ALLOW is at index: 4 + n + 1  (past all jump instructions and the DENY).
-		// From instruction [4+i+1], we need to skip (n - 1 - i) instructions to reach ALLOW.
-		jt := uint8(n - 1 - i)
+		// ALLOW is at absolute index 4+n+1; the true-branch offset is relative to
+		// the NEXT instruction (4+i+1), so jt = (4+n+1) - (4+i+1) = n - i.
+		jt := uint8(n - i)
 		f = append(f, bpfJump(bpfJmp|bpfJeq|bpfK, nr, jt, 0))
 	}
 

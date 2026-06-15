@@ -98,6 +98,9 @@ func rerunAsChild(t *testing.T, tc string) *exec.Cmd {
 }
 
 func TestDeniedSyscallIsBlocked(t *testing.T) {
+	if raceEnabled() {
+		t.Skip("seccomp subprocess test skipped under -race: race detector uses syscalls not in the allow-list")
+	}
 	cmd := rerunAsChild(t, "deny-blocked")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -106,6 +109,9 @@ func TestDeniedSyscallIsBlocked(t *testing.T) {
 }
 
 func TestAllowedSyscallPasses(t *testing.T) {
+	if raceEnabled() {
+		t.Skip("seccomp subprocess test skipped under -race: race detector uses syscalls not in the allow-list")
+	}
 	cmd := rerunAsChild(t, "allow-listed")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
