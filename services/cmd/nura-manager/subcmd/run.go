@@ -12,6 +12,7 @@ import (
 	"github.com/yasserrmd/nuraos/services/internal/journal"
 	"github.com/yasserrmd/nuraos/services/internal/lifecycle"
 	"github.com/yasserrmd/nuraos/services/internal/resolver"
+	"github.com/yasserrmd/nuraos/services/internal/timesync"
 	"github.com/yasserrmd/nuraos/services/internal/unit"
 )
 
@@ -71,6 +72,14 @@ func Run(dir string) error {
 		cancel()
 	}()
 
+	// Time subsystem: RTC, timezone, optional NTP.
+	timeMgr := timesync.NewManager(log)
+	if err := timeMgr.Start(ctx, timesync.Config{
+		NTPServer: os.Getenv("NURA_NTP_SERVER"),
+	}); err != nil {
+		log.Warn("time manager start error", "err", err)
+	}
+
 	// Optional remote forwarding: set NURA_FORWARD_URL to enable.
 	if fwdURL := os.Getenv("NURA_FORWARD_URL"); fwdURL != "" && jw != nil {
 		fwd := journal.NewForwarder(journalDir, journal.ForwardConfig{
@@ -81,6 +90,7 @@ func Run(dir string) error {
 		log.Info("log forwarding enabled", "url", fwdURL)
 	}
 
+	_ = timeMgr // available for future service injection
 	mgr := lifecycle.NewManager(log, jw)
 
 	// Start the control socket server so nuractl can query and control services.
