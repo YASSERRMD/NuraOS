@@ -59,3 +59,29 @@ type ToolInfo struct {
 	ReadOnly    bool        `json:"read_only"`
 	Schema      interface{} `json:"schema"`
 }
+
+// AgentMetrics is returned by GET /metrics on the agent socket (Phase 31).
+// Zero values indicate the agent has not yet accumulated data for that counter.
+type AgentMetrics struct {
+	TokensIn         int64            `json:"tokens_in_total"`
+	TokensOut        int64            `json:"tokens_out_total"`
+	TurnsTotal       int64            `json:"turns_total"`
+	ToolCallsTotal   map[string]int64 `json:"tool_calls_by_name"`
+	ProviderRequests map[string]int64 `json:"provider_requests"`
+	UptimeSeconds    int64            `json:"uptime_seconds"`
+}
+
+// StatusComponent is one component's readiness within a StatusResponse.
+type StatusComponent struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`          // "ok" | "degraded" | "unknown"
+	Detail string `json:"detail,omitempty"` // human-readable context
+}
+
+// StatusResponse is the payload for GET /status on the gateway (Phase 31).
+type StatusResponse struct {
+	Overall    string            `json:"overall"` // "ok" | "degraded"
+	Version    string            `json:"version"`
+	Uptime     int64             `json:"uptime_seconds"`
+	Components []StatusComponent `json:"components"`
+}
