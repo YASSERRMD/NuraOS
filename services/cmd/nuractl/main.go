@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yasserrmd/nuraos/services/internal/backup"
 	"github.com/yasserrmd/nuraos/services/internal/ctlsock"
 	"github.com/yasserrmd/nuraos/services/internal/delta"
 	"github.com/yasserrmd/nuraos/services/internal/diagbundle"
@@ -129,6 +130,10 @@ func main() {
 		cmdSelftest(rest, outputJSON)
 	case "diag":
 		cmdDiag(rest, outputJSON)
+	case "backup":
+		cmdBackup(rest, outputJSON)
+	case "restore":
+		cmdRestore(rest, outputJSON)
 	case "poweroff":
 		cmdShutdown(client, outputJSON, false)
 	case "reboot":
@@ -629,6 +634,138 @@ func cmdSelftest(args []string, asJSON bool) {
 	}
 }
 
+func cmdBackup(args []string, asJSON bool) {
+	dataDir := os.Getenv("NURA_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+	outPath := ""
+	excludeModels := true
+	passphrase := ""
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--out":
+			i++
+			if i < len(args) {
+				outPath = args[i]
+			}
+		case "--data-dir":
+			i++
+			if i < len(args) {
+				dataDir = args[i]
+			}
+		case "--include-models":
+			excludeModels = false
+		case "--passphrase":
+			i++
+			if i < len(args) {
+				passphrase = args[i]
+			}
+		}
+	}
+
+	if outPath == "" {
+		ts := fmt.Sprintf("nura-backup-%s.tar.gz",
+			// Use a fixed pattern; the backup.Run will embed the real timestamp
+			// in the manifest.
+			"archive")
+		outPath = "/tmp/" + ts
+	}
+
+	m, err := backup.Run(backup.Options{
+		DataDir:       dataDir,
+		OutPath:       outPath,
+		ExcludeModels: excludeModels,
+		Passphrase:    passphrase,
+	})
+	if err != nil {
+		fatalf("backup: %v", err)
+	}
+	_ = backup.WriteManifest(outPath, m)
+
+	if asJSON {
+		printJSON(map[string]interface{}{
+			"archive":         outPath,
+			"sha256":          m.SHA256,
+			"file_count":      m.FileCount,
+			"encrypted":       m.Encrypted,
+			"excluded_models": m.ExcludedModels,
+		})
+		return
+	}
+	fmt.Printf("backup created: %s\n", outPath)
+	fmt.Printf("  files:     %d\n", m.FileCount)
+	fmt.Printf("  sha256:    %s\n", m.SHA256)
+	fmt.Printf("  encrypted: %v\n", m.Encrypted)
+	fmt.Printf("  models:    excluded=%v\n", m.ExcludedModels)
+}
+
+func cmdRestore(args []string, asJSON bool) {
+	archivePath := ""
+	destDir := os.Getenv("NURA_DATA_DIR")
+	if destDir == "" {
+		destDir = "/data"
+	}
+	passphrase := ""
+	dryRun := false
+	expectedSHA := ""
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--dest":
+			i++
+			if i < len(args) {
+				destDir = args[i]
+			}
+		case "--passphrase":
+			i++
+			if i < len(args) {
+				passphrase = args[i]
+			}
+		case "--dry-run":
+			dryRun = true
+		case "--sha256":
+			i++
+			if i < len(args) {
+				expectedSHA = args[i]
+			}
+		default:
+			if archivePath == "" && args[i][0] != '-' {
+				archivePath = args[i]
+			}
+		}
+	}
+	if archivePath == "" {
+		fatalf("restore: archive path required")
+	}
+
+	res, err := backup.Restore(backup.RestoreOptions{
+		ArchivePath:    archivePath,
+		DestDir:        destDir,
+		Passphrase:     passphrase,
+		DryRun:         dryRun,
+		ExpectedSHA256: expectedSHA,
+	})
+	if err != nil {
+		fatalf("restore: %v", err)
+	}
+
+	if asJSON {
+		printJSON(res)
+		return
+	}
+	if dryRun {
+		fmt.Printf("dry-run: %d files would be restored to %s\n", len(res.Preview), destDir)
+		for _, p := range res.Preview {
+			fmt.Println(" ", p)
+		}
+		return
+	}
+	fmt.Printf("restore complete: %d files restored to %s\n", res.FilesRestored, destDir)
+	fmt.Printf("  verified sha256: %s\n", res.VerifiedSHA256)
+}
+
 func cmdDiag(args []string, asJSON bool) {
 	crashDir := os.Getenv("NURA_DATA_DIR")
 	if crashDir == "" {
@@ -745,6 +882,10 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "                            Run built-in health self-tests")
 	fmt.Fprintln(os.Stderr, "  diag [--out DIR] [--crash-dir DIR]")
 	fmt.Fprintln(os.Stderr, "                            Bundle redacted diagnostic archive")
+	fmt.Fprintln(os.Stderr, "  backup [--out FILE] [--include-models] [--passphrase P]")
+	fmt.Fprintln(os.Stderr, "                            Create a consistent backup archive of /data")
+	fmt.Fprintln(os.Stderr, "  restore <archive> [--dest DIR] [--dry-run] [--passphrase P] [--sha256 H]")
+	fmt.Fprintln(os.Stderr, "                            Restore /data from a backup archive")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json          JSON output")

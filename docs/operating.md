@@ -261,6 +261,69 @@ exist.
 
 ---
 
+## Backup and restore
+
+NuraOS backs up the entire `/data` directory (config, sessions, journal, crash
+captures) to a gzip-compressed tar archive. Large model blobs are excluded by
+default to keep backup sizes manageable.
+
+### Creating a backup
+
+```sh
+# Minimal backup (models excluded, no encryption):
+nuractl backup --out /mnt/usb/nura-backup.tar.gz
+
+# Include model blobs:
+nuractl backup --out /mnt/usb/nura-backup.tar.gz --include-models
+
+# Encrypted backup (AES-256-GCM, key derived from passphrase):
+nuractl backup --out /mnt/usb/nura-backup.tar.gz --passphrase "my-secret"
+
+# JSON output (returns path and SHA-256):
+nuractl backup --out /tmp/backup.tar.gz --json
+```
+
+The command writes a sidecar manifest (`<archive>.manifest.json`) alongside the
+archive containing the SHA-256 digest, file count, creation timestamp, and
+encryption flag.
+
+Model blob policy: files under `/data/models/**` are excluded by default.
+Pass `--include-models` to override. For large deployments, back up models
+separately or rely on re-download.
+
+### Restoring from a backup
+
+```sh
+# Dry-run (list what would be restored without writing):
+nuractl restore /mnt/usb/nura-backup.tar.gz --dest /data --dry-run
+
+# Restore with SHA-256 verification:
+nuractl restore /mnt/usb/nura-backup.tar.gz --dest /data \
+    --sha256 <hex-from-manifest>
+
+# Restore from encrypted backup:
+nuractl restore /mnt/usb/nura-backup.tar.gz --dest /data \
+    --passphrase "my-secret"
+```
+
+Restore aborts if the SHA-256 does not match the expected value (tamper
+detection). For encrypted archives, decryption failure also aborts the restore.
+
+### Consistency
+
+The backup command walks the live `/data` directory. For maximum consistency,
+quiesce dependent services before running a backup:
+
+```sh
+nuractl stop gateway
+nuractl stop llama-server
+nuractl backup --out /mnt/usb/nura-backup.tar.gz
+nuractl start llama-server
+nuractl start gateway
+```
+
+---
+
 ## Build
 
 ```sh
