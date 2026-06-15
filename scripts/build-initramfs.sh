@@ -86,10 +86,22 @@ if [ -f "${SUPERVISOR_SRC}" ]; then
     log "installed supervisor"
 fi
 
-# ----- Build additional staged files (agent, gateway, llama-server) -----
-# Future phases install their binaries here.
-for extra_dir in sbin; do
-    mkdir -p "${STAGING}/${extra_dir}"
+# ----- nura-agent binary (installed by build-agent.sh) -----
+AGENT_BIN="${REPO_ROOT}/rootfs/staging/sbin/nura-agent"
+if [ -f "${AGENT_BIN}" ]; then
+    mkdir -p "${STAGING}/sbin"
+    install -m 755 "${AGENT_BIN}" "${STAGING}/sbin/nura-agent"
+    log "installed nura-agent"
+fi
+
+# ----- Gateway and llama-server (installed by later phases) -----
+for svc in llama-server gateway; do
+    SVC_BIN="${REPO_ROOT}/rootfs/staging/sbin/${svc}"
+    if [ -f "${SVC_BIN}" ]; then
+        mkdir -p "${STAGING}/sbin"
+        install -m 755 "${SVC_BIN}" "${STAGING}/sbin/${svc}"
+        log "installed ${svc}"
+    fi
 done
 
 # ----- Assemble cpio.gz -----
