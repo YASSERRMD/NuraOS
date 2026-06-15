@@ -12,6 +12,7 @@ pub fn run() {
 
     match subcommand {
         "run" => cmd_run(),
+        "repl" => crate::repl_cmd::cmd_repl(),
         "version" | "--version" | "-V" => cmd_version(),
         "doctor" => cmd_doctor(),
         "--help" | "-h" | "help" => cmd_help(),
@@ -23,7 +24,7 @@ pub fn run() {
     }
 }
 
-fn init_tracing() {
+pub fn init_tracing() {
     let cfg = Config::load().unwrap_or_default();
     init_logging(&LoggingConfig {
         level: cfg.log_level,
@@ -42,6 +43,7 @@ fn cmd_help() {
     println!();
     println!("SUBCOMMANDS:");
     println!("    run        Start the NuraOS agent (default)");
+    println!("    repl       Start an interactive serial REPL session");
     println!("    version    Print the version string");
     println!("    doctor     Check environment and configuration");
     println!("    help       Print this help message");
