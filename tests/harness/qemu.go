@@ -47,10 +47,9 @@ type QEMUInstance struct {
 	// RepoRoot is the NuraOS repository root used to boot this instance.
 	RepoRoot string
 
-	cmd       *exec.Cmd
-	cancel    context.CancelFunc
-	tmpDir    string
-	stdinW    *os.File // write-end of stdin pipe; kept open to prevent EOF
+	cmd        *exec.Cmd
+	cancel     context.CancelFunc
+	tmpDir     string
 	serialConn net.Conn
 	serial     *SerialClient
 	http       *HTTPClient
@@ -92,35 +91,48 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		return nil, fmt.Errorf("creating temp dir: %w", err)
 	}
 
+	serialSock := filepath.Join(tmpDir, "serial.sock")
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
+	// nokaslr: disable KASLR so the kernel does not need early entropy from
+	// RDRAND before the virtio-rng device is available. KASLR runs in the
+	// decompressor phase, before any serial console is set up, so a failure
+	// there produces zero serial output and looks identical to a silent hang.
+	// earlyprintk=serial,ttyS0,115200: capture output before console_init().
+	// panic=5: reboot after 5 s so -no-reboot can exit QEMU on a kernel panic.
 	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// -nographic routes ttyS0 to QEMU's own stdout via the implicit mon:stdio
-	// mux. The mux reads stdin for monitor commands; when stdin is /dev/null
-	// QEMU processes EOF asynchronously. SeaBIOS outputs before that happens
-	// (fast, synchronous), but by the time the kernel starts (~200 ms later)
-	// the mux has seen EOF and stops forwarding serial TX. Fix: provide a
-	// pipe as QEMU's stdin that is never closed until Close(), so the mux
-	// never receives EOF and kernel output continues to flow to serialFile.
-	stdinR, stdinW, err := os.Pipe()
-	if err != nil {
-		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("creating stdin pipe: %w", err)
-	}
-
+	// -machine pc: use the classic i440fx+PIIX3 chipset; simpler PCI topology
+	//   than q35 and well-tested with direct-kernel boot (-kernel).
+	// accel=kvm:tcg: prefer KVM hardware acceleration; fall back to TCG if KVM
+	//   is unavailable. KVM is available on GitHub-hosted runners.
+	// -cpu qemu64: use the generic QEMU 64-bit CPU model instead of -cpu host.
+	//   host pass-through exposes AMD-specific CPUID flags that can interact with
+	//   early kernel hardening code; qemu64 presents a minimal, predictable CPUID
+	//   that the kernel handles without surprises.
+	// -serial unix:SOCK,server,nowait: expose the guest serial port via a UNIX
+	//   domain socket. QEMU creates the socket immediately on startup (nowait
+	//   means it does not block for a client). The harness then connects and
+	//   tees the output to serial.log. This approach is independent of QEMU's
+	//   stdin/stdout and works reliably with any stdin setting.
+	// -d cpu_reset,guest_errors: emit CPU reset and guest error events to stderr
+	//   (captured in qemu.stderr). Reveals triple-faults and memory faults.
+	// virtio-rng-pci: provides hardware entropy to the guest via the virtio bus,
+	//   seeding the kernel CSPRNG early without relying on host RDRAND.
 	args := []string{
 		"-machine", "pc,accel=kvm:tcg",
-		"-cpu", "host",
+		"-cpu", "qemu64",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
-		"-nographic",
+		"-display", "none",
+		"-serial", fmt.Sprintf("unix:%s,server,nowait", serialSock),
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
+		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
@@ -142,33 +154,55 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	vmCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(vmCtx, "qemu-system-x86_64", args...)
 
-	// Pipe as stdin: keeps the mon:stdio mux alive so kernel serial TX is
-	// forwarded. /dev/null would cause EOF → mux close → silent kernel.
-	cmd.Stdin = stdinR
-
-	serialFile, err := os.Create(serialLog)
+	// Redirect QEMU stderr → qemu.stderr (QEMU internal messages, CPU resets, etc.).
+	// Serial output goes to the unix socket, not to QEMU's stdout/stderr.
+	qemuStderr, err := os.Create(qemuStderrPath)
 	if err != nil {
-		_ = stdinR.Close()
-		_ = stdinW.Close()
 		cancel()
 		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("creating serial log: %w", err)
+		return nil, fmt.Errorf("creating qemu stderr log: %w", err)
 	}
-	cmd.Stdout = serialFile
-	cmd.Stderr = serialFile
-
-	_ = os.WriteFile(qemuStderrPath, []byte("see serial.log (combined stdout+stderr)\n"), 0o644)
+	cmd.Stderr = qemuStderr
 
 	if err := cmd.Start(); err != nil {
-		_ = stdinR.Close()
-		_ = stdinW.Close()
-		_ = serialFile.Close()
+		_ = qemuStderr.Close()
 		cancel()
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("starting qemu-system-x86_64: %w", err)
 	}
-	// Read-end is handed to the child; close it in the parent.
-	_ = stdinR.Close()
+
+	// Wait for QEMU to create the serial socket before connecting.
+	if err := waitForSocket(serialSock, 10*time.Second); err != nil {
+		cancel()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = qemuStderr.Close()
+		_ = os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("waiting for serial socket: %w", err)
+	}
+
+	conn, err := net.Dial("unix", serialSock)
+	if err != nil {
+		cancel()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = qemuStderr.Close()
+		_ = os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("connecting to serial socket: %w", err)
+	}
+
+	logFile, err := os.Create(serialLog)
+	if err != nil {
+		_ = conn.Close()
+		cancel()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = qemuStderr.Close()
+		_ = os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("creating serial log: %w", err)
+	}
+
+	serial := newSerialClient(conn, logFile)
 
 	return &QEMUInstance{
 		APIPort:       apiPort,
@@ -179,7 +213,8 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		cmd:           cmd,
 		cancel:        cancel,
 		tmpDir:        tmpDir,
-		stdinW:        stdinW,
+		serialConn:    conn,
+		serial:        serial,
 		http: &HTTPClient{
 			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", apiPort),
 		},
@@ -196,9 +231,6 @@ func (q *QEMUInstance) HTTP() *HTTPClient { return q.http }
 // all temporary files created for this instance.
 func (q *QEMUInstance) Close() error {
 	q.cancel()
-	if q.stdinW != nil {
-		_ = q.stdinW.Close()
-	}
 	if q.serial != nil {
 		q.serial.close()
 	}
