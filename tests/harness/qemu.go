@@ -91,7 +91,6 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		return nil, fmt.Errorf("creating temp dir: %w", err)
 	}
 
-	serialSock := filepath.Join(tmpDir, "serial.sock")
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
@@ -104,10 +103,10 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	}
 
 	// Build QEMU argument list. We use -display none so QEMU runs headlessly.
-	// -serial unix:SOCK,server (no nowait): QEMU waits for the harness to
-	// connect before starting the machine, guaranteeing all serial output from
-	// the very first byte is captured even if the kernel panics before
-	// console_init().
+	// -serial file:PATH: QEMU writes serial output directly to the log file,
+	// bypassing the Unix socket mechanism entirely. This guarantees every byte
+	// is captured even if the kernel panics before console_init(), and removes
+	// any timing dependency on socket client connection.
 	// virtio-rng-pci: provides hardware entropy so the guest CSPRNG seeds
 	// immediately and gateway startup is not delayed by entropy starvation.
 	args := []string{
@@ -118,7 +117,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-display", "none",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
-		"-serial", fmt.Sprintf("unix:%s,server", serialSock),
+		"-serial", "file:" + serialLog,
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
@@ -155,38 +154,9 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		return nil, fmt.Errorf("starting qemu-system-x86_64: %w", err)
 	}
 
-	// Wait for QEMU to create the serial socket before connecting.
-	if err := waitForSocket(serialSock, 10*time.Second); err != nil {
-		cancel()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = qemuStderr.Close()
-		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("waiting for serial socket: %w", err)
-	}
-
-	conn, err := net.Dial("unix", serialSock)
-	if err != nil {
-		cancel()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = qemuStderr.Close()
-		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("connecting to serial socket: %w", err)
-	}
-
-	logFile, err := os.Create(serialLog)
-	if err != nil {
-		_ = conn.Close()
-		cancel()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = qemuStderr.Close()
-		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("creating serial log: %w", err)
-	}
-
-	serial := newSerialClient(conn, logFile)
+	// QEMU writes serial output directly to serialLog via "-serial file:".
+	// No socket connection or handshake is needed; the file is created by QEMU
+	// when the first byte is written.
 
 	return &QEMUInstance{
 		APIPort:       apiPort,
@@ -197,8 +167,6 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		cmd:           cmd,
 		cancel:        cancel,
 		tmpDir:        tmpDir,
-		serialConn:    conn,
-		serial:        serial,
 		http: &HTTPClient{
 			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", apiPort),
 		},
