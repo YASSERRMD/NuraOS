@@ -77,9 +77,13 @@ CONFIG_MODULES=n
 # Memory: enforce R^X on kernel text and data pages.
 CONFIG_STRICT_KERNEL_RWX=y
 
-# KASLR: randomize kernel load address to frustrate ROP chains.
-CONFIG_RANDOMIZE_BASE=y
-CONFIG_RANDOMIZE_MEMORY=y
+# KASLR: disabled for CI QEMU TCG compatibility.
+# CONFIG_RANDOMIZE_BASE requires PIE relocation; the decompressor's relocation
+# code path interacts poorly with QEMU TCG accel + direct -kernel boot, causing
+# a silent pre-serial panic before parse_early_param() runs.  Re-enable once
+# the base boot is verified green.
+CONFIG_RANDOMIZE_BASE=n
+CONFIG_RANDOMIZE_MEMORY=n
 
 # Stack: add a strong per-function canary (GCC -fstack-protector-strong).
 CONFIG_STACKPROTECTOR=y

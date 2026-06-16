@@ -41,7 +41,7 @@ jobs:
       - name: Compute image cache key
         id: cache-key
         run: |
-          KEY=$(find scripts/ agent/ services/ rootfs/ \
+          KEY=$(find scripts/ agent/ services/ rootfs/ kernel/configs/ \
                 -type f -not -path '*/.git/*' | sort \
                 | xargs sha256sum 2>/dev/null | sha256sum | cut -c1-16)
           echo "key=nuraos-image-v1-${KEY}" >> "$GITHUB_OUTPUT"
