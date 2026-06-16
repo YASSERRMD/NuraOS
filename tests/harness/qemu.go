@@ -125,11 +125,13 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// triple fault before any kernel instruction executed -- the fault showed up as
 	// two CPU resets in qemu-stderr with no serial output and no interrupt trace,
 	// indicating QEMU's TCG setup (not kernel code) was faulting.
-	// CPU: host when KVM is available gives best compatibility; with TCG fallback
-	// qemu64 is the canonical virtual x86_64 model.
+	// CPU: max exposes the best available feature set -- on KVM this is the host
+	// CPU, on TCG fallback it is the maximum set the emulator can provide.  This
+	// avoids the -cpu host restriction (requires KVM/HVF) while still giving
+	// full feature coverage when KVM is present.
 	args := []string{
 		"-machine", "pc,accel=kvm:tcg",
-		"-cpu", "host",
+		"-cpu", "max",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
