@@ -36,13 +36,8 @@ func CaptureEvidence(ctx context.Context, inst *QEMUInstance, result *Result, bu
 		result.Evidence.JournalExcerpt = tailLines(serialDst, 100)
 	}
 
-	// QEMU stderr -- captures QEMU startup errors and KVM/TCG fallback messages.
+	// QEMU stderr -- captures QEMU startup errors and CPU reset state.
 	captureFile(inst.StderrLogPath, filepath.Join(dir, "qemu-stderr.log"))
-
-	// ttyS1 direct-file serial -- written by QEMU without a socket connection.
-	// Non-zero size here when serial.log is empty proves the unix socket is
-	// losing data; both empty proves the kernel is not writing to any UART.
-	captureFile(inst.EarlySerialLogPath, filepath.Join(dir, "early-serial.log"))
 
 	// Metrics snapshot.
 	if path := captureEndpoint(ctx, inst, "/metrics", filepath.Join(dir, "metrics.txt")); path != "" {

@@ -40,13 +40,8 @@ type QEMUInstance struct {
 	APIPort int
 	// MetricsPort is the host-side port forwarded to the guest metrics endpoint (port 9090).
 	MetricsPort int
-	// SerialLogPath is the path to the file capturing serial console output (ttyS0 unix socket).
+	// SerialLogPath is the path to the file capturing serial console output.
 	SerialLogPath string
-	// EarlySerialLogPath is the path to the file capturing ttyS1 output written
-	// directly by QEMU (no socket). Non-zero bytes here when SerialLogPath is
-	// empty proves the unix socket is losing data; both empty proves the kernel
-	// is not writing to any UART at all.
-	EarlySerialLogPath string
 	// StderrLogPath is the path to the file capturing QEMU process stderr.
 	StderrLogPath string
 	// RepoRoot is the NuraOS repository root used to boot this instance.
@@ -98,54 +93,24 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 
 	serialSock := filepath.Join(tmpDir, "serial.sock")
 	serialLog := filepath.Join(tmpDir, "serial.log")
-	earlySerialLog := filepath.Join(tmpDir, "early-serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
-	// console=ttyS0 and console=ttyS1: write kernel messages to both the unix
-	// socket serial (ttyS0) and the direct-file serial (ttyS1).  If ttyS1
-	// captures data that ttyS0 does not, the unix socket backend is at fault.
-	// If both are empty, the kernel is not writing to any UART at all.
-	// earlycon=uart8250,io,0x3f8 and 0x2f8: register early consoles for COM1
-	// and COM2 so we get output before the full 8250 driver initialises.
-	// earlyprintk=serial,ttyS0 and ttyS1: legacy early-printk path for both.
-	// nokaslr: disable KASLR so the kernel does not need early entropy from
-	// RDRAND before the virtio-rng device is available. KASLR runs in the
-	// decompressor phase, before any serial console is set up, so a failure
-	// there produces zero serial output and looks identical to a silent hang.
-	// panic=5: reboot after 5 s so -no-reboot can exit QEMU on a kernel panic.
-	kernelArgs := "console=ttyS0,115200 console=ttyS1,115200" +
-		" earlycon=uart8250,io,0x3f8,115200 earlycon=uart8250,io,0x2f8,115200" +
-		" earlyprintk=serial,ttyS0,115200 earlyprintk=serial,ttyS1,115200" +
-		" nokaslr panic=5 loglevel=7"
+	kernelArgs := "console=ttyS0,115200 panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// -machine q35,accel=kvm:tcg: Intel Q35 chipset. KVM is tried first (it is
-	//   enabled on CI Azure runners via the Enable KVM workflow step); TCG is
-	//   the fallback for environments without hardware virtualisation.  KVM
-	//   boots the kernel ~100× faster than TCG and avoids TCG-specific
-	//   emulation edge-cases that can cause silent early-boot failures.
-	// -cpu qemu64: minimal, predictable 64-bit CPU; same as run-qemu.sh.
-	// -serial unix:SOCK,server,nowait: ttyS0 via a UNIX domain socket so the
-	//   harness can read boot output and send REPL commands (SerialClient).
-	// -chardev file … -device isa-serial: ttyS1 direct-file serial backend.
-	//   QEMU writes here without any socket; if this log has content while
-	//   serial.log (ttyS0) is empty the unix socket backend is the culprit.
-	// -d cpu_reset,guest_errors: QEMU debug events; output goes to qemu.stderr.
-	// virtio-rng-pci: provides hardware entropy to the guest via the virtio
-	//   bus, seeding the kernel CSPRNG early without relying on host RDRAND.
+	// Build QEMU argument list. We use -display none so QEMU runs headlessly,
+	// and -serial unix:SOCK so the serial console is accessible via a socket
+	// rather than stdio. This lets us both capture boot output and send
+	// REPL commands programmatically.
 	args := []string{
-		"-machine", "q35,accel=kvm:tcg",
+		"-machine", "q35,accel=tcg",
 		"-cpu", "qemu64",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
 		"-serial", fmt.Sprintf("unix:%s,server,nowait", serialSock),
-		"-chardev", fmt.Sprintf("file,id=earlyserial,path=%s", earlySerialLog),
-		"-device", "isa-serial,chardev=earlyserial",
-		"-object", "rng-builtin,id=rng0",
-		"-device", "virtio-rng-pci,rng=rng0",
 		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
@@ -168,8 +133,6 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	vmCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(vmCtx, "qemu-system-x86_64", args...)
 
-	// Redirect QEMU stderr → qemu.stderr (QEMU internal messages, CPU resets, etc.).
-	// Serial output goes to the unix socket, not to QEMU's stdout/stderr.
 	qemuStderr, err := os.Create(qemuStderrPath)
 	if err != nil {
 		cancel()
@@ -219,12 +182,11 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	serial := newSerialClient(conn, logFile)
 
 	return &QEMUInstance{
-		APIPort:            apiPort,
-		MetricsPort:        metricsPort,
-		SerialLogPath:      serialLog,
-		EarlySerialLogPath: earlySerialLog,
-		StderrLogPath:      qemuStderrPath,
-		RepoRoot:           opts.RepoRoot,
+		APIPort:       apiPort,
+		MetricsPort:   metricsPort,
+		SerialLogPath: serialLog,
+		StderrLogPath: qemuStderrPath,
+		RepoRoot:      opts.RepoRoot,
 		cmd:           cmd,
 		cancel:        cancel,
 		tmpDir:        tmpDir,
