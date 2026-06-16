@@ -106,14 +106,14 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// -machine pc: use the classic i440fx+PIIX3 chipset; simpler PCI topology
-	//   than q35 and well-tested with direct-kernel boot (-kernel).
-	// accel=kvm:tcg: prefer KVM hardware acceleration; fall back to TCG if KVM
-	//   is unavailable. KVM is available on GitHub-hosted runners.
-	// -cpu qemu64: use the generic QEMU 64-bit CPU model instead of -cpu host.
-	//   host pass-through exposes AMD-specific CPUID flags that can interact with
-	//   early kernel hardening code; qemu64 presents a minimal, predictable CPUID
-	//   that the kernel handles without surprises.
+	// -machine q35,accel=tcg: Intel Q35 chipset with TCG software emulation.
+	//   This matches the reference run-qemu.sh configuration. TCG is slower
+	//   than KVM but completely deterministic and avoids issues that arise when
+	//   mixing the qemu64 CPU model with AMD KVM (where some CPUID flags
+	//   exposed by the real host CPU can interact badly with early kernel
+	//   hardening code such as CONFIG_BUG_ON_DATA_CORRUPTION and
+	//   CONFIG_STRICT_KERNEL_RWX before any console output is available).
+	// -cpu qemu64: minimal, predictable 64-bit CPU; same as run-qemu.sh.
 	// -serial unix:SOCK,server,nowait: expose the guest serial port via a UNIX
 	//   domain socket. QEMU creates the socket immediately on startup (nowait
 	//   means it does not block for a client). The harness then connects and
@@ -124,7 +124,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// virtio-rng-pci: provides hardware entropy to the guest via the virtio bus,
 	//   seeding the kernel CSPRNG early without relying on host RDRAND.
 	args := []string{
-		"-machine", "pc,accel=kvm:tcg",
+		"-machine", "q35,accel=tcg",
 		"-cpu", "qemu64",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
