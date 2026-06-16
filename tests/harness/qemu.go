@@ -103,8 +103,10 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// scripts/run-qemu.sh. Using -display none + -serial stdio does NOT achieve
 	// the same routing; only -nographic correctly wires ttyS0 to stdio so
 	// cmd.Stdout captures kernel console output.
+	// pc (i440fx) machine: simpler PCI topology than q35; avoids PCIe root
+	// complex probing that can hang the kernel in early boot.
 	args := []string{
-		"-machine", "q35,accel=kvm:tcg",
+		"-machine", "pc,accel=kvm:tcg",
 		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
