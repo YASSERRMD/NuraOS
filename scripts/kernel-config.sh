@@ -89,5 +89,8 @@ fi
 if ! grep -qE "^CONFIG_VIRTIO_MENU=y" "${LINUX_DIR}/.config"; then
     die "CONFIG_VIRTIO_MENU not set in final .config -- all virtio drivers (net/blk/rng) are gated behind it and will be dropped."
 fi
+if ! grep -qE "^CONFIG_VIRTIO_NET=y" "${LINUX_DIR}/.config"; then
+    die "CONFIG_VIRTIO_NET not set in final .config (needs CONFIG_NETDEVICES=y) -- no eth0, DHCP fails, and the harness /healthz probe is unreachable via hostfwd."
+fi
 
 log "done."

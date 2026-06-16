@@ -67,6 +67,12 @@ CONFIG_INET=y
 CONFIG_PACKET=y
 CONFIG_UNIX=y
 CONFIG_IPV6=n
+# CONFIG_NETDEVICES is the menu gate for ALL network device drivers; tinyconfig
+# leaves it off, which silently drops CONFIG_VIRTIO_NET below.  Without the
+# virtio-net driver there is no eth0, DHCP fails, and the QEMU user-net hostfwd
+# can never reach the guest gateway -> the test harness /healthz probe times out.
+CONFIG_NETDEVICES=y
+CONFIG_NET_CORE=y
 
 # ----- Block layer -----
 CONFIG_BLOCK=y
@@ -117,7 +123,9 @@ CONFIG_CGROUP_CPUACCT=y
 CONFIG_CGROUP_FREEZER=y
 CONFIG_MEMCG=y
 CONFIG_MEMCG_SWAP=n
-CONFIG_BLKCG=y
+# Correct symbol is CONFIG_BLK_CGROUP (the io/blkio controller); CONFIG_BLKCG is
+# not a real Kconfig symbol in 6.6 and was silently dropped.
+CONFIG_BLK_CGROUP=y
 CONFIG_CGROUP_PIDS=y
 
 # ----- Seccomp (needed by gateway) -----
