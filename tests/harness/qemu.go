@@ -95,22 +95,27 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
-	kernelArgs := "console=ttyS0,115200 panic=5 loglevel=7"
+	// earlyprintk captures output before console_init(); serial,ttyS0 routes
+	// directly to the 8250 UART (I/O port 0x3F8) so bytes appear even during
+	// very early setup_arch() before the full console subsystem is live.
+	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// Build QEMU argument list. We use -display none so QEMU runs headlessly,
-	// and -serial unix:SOCK so the serial console is accessible via a socket
-	// rather than stdio. This lets us both capture boot output and send
-	// REPL commands programmatically.
+	// Build QEMU argument list. We use -display none so QEMU runs headlessly.
+	// -serial unix:SOCK,server (without nowait) makes QEMU pause the VM until
+	// the harness connects, guaranteeing ALL serial output is captured from the
+	// very first byte -- including decompressor and earlyprintk messages that
+	// would otherwise be lost before the client connects.
 	args := []string{
 		"-machine", "q35,accel=tcg",
 		"-cpu", "qemu64",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
-		"-serial", fmt.Sprintf("unix:%s,server,nowait", serialSock),
+		"-serial", fmt.Sprintf("unix:%s,server", serialSock),
+		"-device", "virtio-rng-pci",
 		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
