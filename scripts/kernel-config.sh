@@ -22,11 +22,25 @@ log "starting from tinyconfig ..."
 make -C "${LINUX_DIR}" ARCH=x86_64 tinyconfig
 
 log "merging NuraOS config fragment ..."
-# kernel/scripts/kconfig/merge_config.sh is available after any prior config step.
+# merge_config.sh defaults its output dir to $PWD (OUTPUT=.), so without -O it
+# writes the merged .config to the repo root -- NOT into the kernel tree -- and
+# the subsequent `make -C "${LINUX_DIR}" olddefconfig` then reads the UN-merged
+# tinyconfig at "${LINUX_DIR}/.config", silently discarding the entire fragment
+# (no TTY/serial/printk/virtio/block -> guest boots with zero console output).
+# -O "${LINUX_DIR}" forces the merged result into the kernel tree where the
+# build and olddefconfig actually read it.
 "${LINUX_DIR}/scripts/kconfig/merge_config.sh" \
     -m \
+    -O "${LINUX_DIR}" \
     "${LINUX_DIR}/.config" \
     "${FRAGMENT}"
+
+# Sanity-check that the merge actually landed in the kernel tree's .config
+# (guards against the OUTPUT-dir bug above regressing).  A sentinel symbol that
+# is OFF in tinyconfig but ON in the fragment must now be present.
+if ! grep -qE "^CONFIG_SERIAL_8250=y" "${LINUX_DIR}/.config"; then
+    die "fragment merge did not land in ${LINUX_DIR}/.config (CONFIG_SERIAL_8250 missing post-merge) -- check merge_config.sh -O output dir"
+fi
 
 log "running olddefconfig to resolve remaining symbols ..."
 make -C "${LINUX_DIR}" ARCH=x86_64 olddefconfig
@@ -59,12 +73,15 @@ for sym in \
     printf '  %s\n' "${line}"
 done
 
-# Warn loudly if the serial console driver was dropped: without it the guest
-# produces zero serial output and every integration suite fails to boot.
-# (Diagnostic build -- once the dependency is fixed this becomes a hard die.)
+# Hard-fail the build if the serial console driver did not survive olddefconfig:
+# without it the guest produces zero serial output and every integration suite
+# fails to boot. This catches both the merge-output-dir bug and any future
+# dependency regression.
 if ! grep -qE "^CONFIG_SERIAL_8250=y" "${LINUX_DIR}/.config"; then
-    log "WARNING: CONFIG_SERIAL_8250 was DROPPED by olddefconfig -- guest will have NO serial console!"
-    log "WARNING: inspect the symbol state above to find the unmet dependency."
+    die "CONFIG_SERIAL_8250 not set in final .config -- guest would have NO serial console. Inspect the symbol state dumped above."
+fi
+if ! grep -qE "^CONFIG_TTY=y" "${LINUX_DIR}/.config"; then
+    die "CONFIG_TTY not set in final .config -- the entire serial subsystem is gated behind it."
 fi
 
 log "done."
