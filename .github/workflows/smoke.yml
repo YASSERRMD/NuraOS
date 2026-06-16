@@ -85,6 +85,12 @@ jobs:
       - name: Install musl-tools
         run: sudo apt-get install -y musl-tools
 
+      # Expose musl-gcc at the path fetch-busybox.sh expects and make kernel
+      # headers visible to it (musl-gcc uses -nostdinc). Without this,
+      # fetch-busybox.sh dies with "musl-gcc not found".
+      - name: Set up musl toolchain
+        run: ./scripts/setup-musl-ci.sh
+
       - name: Build nura-agent (musl)
         working-directory: agent
         run: |
