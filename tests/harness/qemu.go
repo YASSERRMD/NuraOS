@@ -95,15 +95,19 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
-	kernelArgs := "console=ttyS0,115200 panic=5 loglevel=7"
+	// earlyprintk=serial,ttyS0,115200: enables very-early console output before
+	// the regular 8250 driver initialises, so kernel panics that occur before
+	// console_init() are captured in the serial log.
+	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// Build QEMU argument list. We use -display none so QEMU runs headlessly,
-	// and -serial unix:SOCK,server,nowait so the serial console is accessible
-	// via a socket rather than stdio. nowait lets QEMU start the VM immediately
-	// without blocking for a client connection.
+	// Build QEMU argument list. We use -display none so QEMU runs headlessly.
+	// -serial unix:SOCK,server (no nowait): QEMU waits for the harness to
+	// connect before starting the machine, guaranteeing all serial output from
+	// the very first byte is captured even if the kernel panics before
+	// console_init().
 	// virtio-rng-pci: provides hardware entropy so the guest CSPRNG seeds
 	// immediately and gateway startup is not delayed by entropy starvation.
 	args := []string{
@@ -114,7 +118,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-display", "none",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
-		"-serial", fmt.Sprintf("unix:%s,server,nowait", serialSock),
+		"-serial", fmt.Sprintf("unix:%s,server", serialSock),
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
