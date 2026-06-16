@@ -154,10 +154,24 @@ log "---"
 
 START=$(date +%s)
 
+# Pick a portable timeout command: GNU coreutils ships `timeout` on Linux and
+# `gtimeout` on macOS (via `brew install coreutils`). macOS has neither by
+# default, so fall back to running without a hard timeout rather than crashing.
+TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout"
+fi
+
 # Run QEMU, tee serial output to log.
-if [ "${TIMEOUT}" -gt 0 ]; then
-    timeout "${TIMEOUT}" qemu-system-x86_64 "${QEMU_ARGS[@]}" 2>&1 | tee "${LOG_FILE}" || true
+if [ "${TIMEOUT}" -gt 0 ] && [ -n "${TIMEOUT_CMD}" ]; then
+    "${TIMEOUT_CMD}" "${TIMEOUT}" qemu-system-x86_64 "${QEMU_ARGS[@]}" 2>&1 | tee "${LOG_FILE}" || true
 else
+    if [ "${TIMEOUT}" -gt 0 ]; then
+        log "WARNING: no 'timeout'/'gtimeout' found; running without a hard timeout"
+        log "         (stop with Ctrl-A x, or 'brew install coreutils' for --timeout on macOS)"
+    fi
     qemu-system-x86_64 "${QEMU_ARGS[@]}" 2>&1 | tee "${LOG_FILE}" || true
 fi
 
