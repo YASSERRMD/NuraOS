@@ -112,6 +112,10 @@ func caseBootReady(_ context.Context, inst *harness.QEMUInstance) harness.Result
 // ---------------------------------------------------------------------------
 
 func caseSerialREPL(ctx context.Context, inst *harness.QEMUInstance) harness.Result {
+	// Serial uses file chardev backend (host writes not supported); skip.
+	if !inst.Serial().CanWrite() {
+		return skip("serial-repl", "serial REPL requires write-capable serial (Phase 35+)")
+	}
 	if err := inst.Serial().SendLine(":help"); err != nil {
 		return fail("serial-repl", fmt.Sprintf("SendLine(:help) failed: %v", err))
 	}

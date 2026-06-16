@@ -135,6 +135,9 @@ func caseProviderDefault(_ context.Context, inst *harness.QEMUInstance) harness.
 // ---------------------------------------------------------------------------
 
 func caseREPLProvider(_ context.Context, inst *harness.QEMUInstance) harness.Result {
+	if !inst.Serial().CanWrite() {
+		return skip("repl-provider", "serial REPL requires write-capable serial (Phase 14+)")
+	}
 	if err := inst.Serial().SendLine(":provider"); err != nil {
 		return fail("repl-provider", fmt.Sprintf("SendLine(:provider) failed: %v", err))
 	}
@@ -152,6 +155,9 @@ func caseREPLProvider(_ context.Context, inst *harness.QEMUInstance) harness.Res
 // ---------------------------------------------------------------------------
 
 func caseREPLTools(_ context.Context, inst *harness.QEMUInstance) harness.Result {
+	if !inst.Serial().CanWrite() {
+		return skip("repl-tools", "serial REPL requires write-capable serial (Phase 14+)")
+	}
 	if err := inst.Serial().SendLine(":tools"); err != nil {
 		return fail("repl-tools", fmt.Sprintf("SendLine(:tools) failed: %v", err))
 	}
@@ -169,6 +175,9 @@ func caseREPLTools(_ context.Context, inst *harness.QEMUInstance) harness.Result
 // ---------------------------------------------------------------------------
 
 func caseREPLClear(_ context.Context, inst *harness.QEMUInstance) harness.Result {
+	if !inst.Serial().CanWrite() {
+		return skip("repl-clear", "serial REPL requires write-capable serial (Phase 14+)")
+	}
 	if err := inst.Serial().SendLine(":clear"); err != nil {
 		return fail("repl-clear", fmt.Sprintf("SendLine(:clear) failed: %v", err))
 	}
