@@ -99,21 +99,24 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// Match scripts/run-qemu.sh exactly:
-	//   -nographic -serial "mon:stdio"
-	// -nographic disables VGA; -serial mon:stdio explicitly muxes ttyS0 with
-	// the QEMU monitor on stdio. Without the explicit -serial flag, -nographic
-	// alone may not route ttyS0 correctly when stdin is /dev/null.
-	// Both stdout and stderr are captured to serial.log (mirrors the script's
-	// "2>&1 | tee" pattern) so QEMU startup messages and kernel serial output
-	// appear together for diagnosis.
+	// Direct serial→stdio without a QEMU monitor mux.
+	// Using -serial mon:stdio muxes the QEMU monitor with serial on stdio; when
+	// stdin is /dev/null the monitor mux immediately receives EOF and propagates
+	// a close event to the serial chardev, silencing all kernel output.
+	// Solution: use a chardev with signal=off and disable the monitor entirely.
+	// -display none: headless (no VGA window)
+	// -chardev stdio,id=s0,signal=off: plain stdio backend, no signal intercept
+	// -serial chardev:s0: wire ttyS0 → the stdio chardev (no mux)
+	// -monitor null: disable QEMU monitor so mon:stdio is never implicitly added
 	args := []string{
 		"-machine", "pc,accel=kvm:tcg",
 		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
-		"-nographic",
-		"-serial", "mon:stdio",
+		"-display", "none",
+		"-chardev", "stdio,id=s0,signal=off",
+		"-serial", "chardev:s0",
+		"-monitor", "null",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
 		"-no-reboot",
