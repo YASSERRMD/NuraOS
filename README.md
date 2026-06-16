@@ -2,219 +2,257 @@
   <img src="docs/assets/banner.png" alt="NuraOS" width="820">
 </p>
 
-# NuraOS
+<h1 align="center">NuraOS</h1>
 
-A tiny, headless, AI-integrated operating system built from a raw Linux kernel
-cloned from kernel.org with a hand-built minimal rootfs (no Buildroot). It boots
-straight into an on-device AI agent reachable over serial console and a local
-HTTP API.
+<p align="center">
+  A purpose-built, headless operating system for on-device AI inference.<br>
+  Raw Linux kernel. Static musl userland. No Buildroot. No desktop. No noise.
+</p>
 
-## What it is
+<p align="center">
+  <img src="https://img.shields.io/badge/kernel-Linux%206.6.87-0d6efd?style=flat-square" alt="Kernel">
+  <img src="https://img.shields.io/badge/userland-musl%20%2B%20BusyBox-success?style=flat-square" alt="Userland">
+  <img src="https://img.shields.io/badge/inference-llama.cpp%20CPU-orange?style=flat-square" alt="Inference">
+  <img src="https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square" alt="License">
+</p>
 
-NuraOS is a purpose-built appliance OS whose sole job is to run an AI agent
-locally on bare metal or a QEMU VM. There is no desktop, no package manager,
-and no unnecessary services. The kernel is minimal, the userland is BusyBox, and
-the agent is a statically compiled Rust binary.
+---
 
-Key properties:
-- Local-first: the default boot path uses llama.cpp on the CPU. Remote providers
-  (Anthropic, OpenAI-compatible) are opt-in.
-- Minimal: every component is justified by the boot-to-agent path.
-- Reproducible: all sources are pinned. Builds are locked and verifiable.
-- Inspectable: every interaction is recorded in an append-only, hash-chained log.
+## Overview
+
+NuraOS is a minimal appliance OS designed around a single objective: run an AI agent locally, with no cloud dependency, on bare metal or a QEMU VM. The system boots directly into `nura-manager`, a lightweight service supervisor that starts the inference engine, the Rust agent core, and the HTTP gateway. Every component is statically linked, pinned to a verified source, and confined by its own cgroup v2 slice, seccomp-BPF filter, and Landlock ruleset.
+
+**Core properties:**
+
+| Property | Detail |
+|---|---|
+| Local-first | llama.cpp runs on-CPU by default. Remote providers are opt-in. |
+| Minimal | Every binary is justified by the boot-to-agent path. |
+| Reproducible | All sources are version-pinned. Builds are fully deterministic. |
+| Auditable | Every interaction is written to an append-only, hash-chained journal. |
+| Secure | No shell exposed by default. Seccomp + Landlock on all long-running services. |
+
+---
 
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.png" alt="NuraOS architecture" width="100%">
+  <img src="docs/assets/architecture.png" alt="NuraOS system architecture" width="100%">
 </p>
 
-NuraOS boots straight into a small service supervisor (`nura-manager`, PID 1)
-that launches the inference server, the Rust agent core, and the HTTP gateway,
-each confined by its own cgroup v2 slice, seccomp-BPF filter, and Landlock
-ruleset. Everything sits on a minimal musl/BusyBox userland over a tinyconfig
-Linux 6.6 kernel, talking to the host through virtio devices.
+The boot sequence goes from kernel init through a BusyBox `/init` script that mounts the `/data` ext4 partition, then hands off to `nura-manager`. Three services come up in parallel: `llama-server` (inference), `nura-agent` (Rust agent core), and `gateway` (HTTP API). All service-to-service communication is over Unix sockets; only the gateway is exposed externally via virtio-net.
 
-## Build pipeline
+---
+
+## Build Pipeline
 
 ```
-kernel.org tarball (pinned, verified)
+kernel.org tarball  (pinned tag, SHA-verified)
         |
         v
-  bzImage (tinyconfig-based x86-64 config)
+  bzImage  (tinyconfig x86-64 + NuraOS config fragments)
         |
-   musl toolchain
-        |
-        v
-  BusyBox (static)  +  nura-agent (Rust, static)  +  llama-server (CPU, static)
+  musl-gcc cross toolchain
         |
         v
-  initramfs (cpio.gz, busybox + agent + server + init script)
-        |
-  /data ext4 image (models, logs, sessions, config)
-        |
-        v
-  QEMU x86-64 (serial console on stdio, virtio-blk /data, user-mode net)
+  BusyBox (static)
+  nura-agent (Rust, musl target)
+  llama-server (llama.cpp, CPU-only, fully static)
+  gateway (Go, musl CGO_ENABLED=0)
         |
         v
-  Serial REPL / HTTP API on forwarded port
+  initramfs.cpio.gz  (cpio archive, no /dev nodes committed)
+        |
+  data.img  (ext4: models, journal, sessions, config, secrets)
+        |
+        v
+  QEMU x86-64  (serial on stdio, virtio-blk /data, user-mode net)
 ```
 
-## Directory layout
+---
+
+## Directory Layout
 
 ```
-kernel/         Linux kernel source (fetched, not committed), config fragments, patches
-rootfs/         Rootfs build scripts, skeleton tree, /init, tests
-third_party/    Vendored sources: llama.cpp (pinned SHA)
-agent/          Rust workspace: nura-agent (bin) + nura-core (lib)
+kernel/         Kernel config fragments and patches (source fetched, not committed)
+rootfs/         /init script, rootfs skeleton, seccomp/landlock profiles, BusyBox config
 services/       Go workspace: HTTP gateway and supporting services
-models/         Placeholder for .gguf model files (gitignored, lives on /data)
-image/          Image assembly scripts, partition layout, build outputs
-scripts/        Build helpers: fetch-kernel, build-kernel, run-qemu, release
-docs/           Architecture, ADRs, runbooks, operator guides
-ci/             CI workflow sources
+agent/          Rust workspace: nura-agent binary and nura-core library
+scripts/        Build, fetch, release, and operator helper scripts
+image/          Image assembly and build outputs (bzImage, initramfs, data.img)
+third_party/    Pinned vendored sources: llama.cpp
+docs/           Architecture decision records, runbooks, operator guides
 ```
 
-## Quick start
+---
 
-1. Check host prerequisites:
-   ```
-   ./scripts/check-host.sh
-   ```
-2. Fetch and verify the kernel source:
-   ```
-   ./scripts/fetch-kernel.sh
-   ```
-3. Build the full image:
-   ```
-   ./scripts/build-image.sh
-   ```
-4. Boot in QEMU:
-   ```
-   ./scripts/run-qemu.sh
-   ```
-5. Connect via the serial console (stdio) or HTTP on the forwarded port.
+## Quick Start
 
-See [docs/host-setup.md](docs/host-setup.md) for the full host prerequisite list
-and [docs/architecture.md](docs/architecture.md) for the system design.
-
-## Gateway API (v1.0)
-
-Once the image is booted and the port is forwarded to the host:
+**Prerequisites:** `gcc`, `make`, `bc`, `bison`, `flex`, `libssl-dev`, `libelf-dev`, `cpio`, `qemu-system-x86`, `musl-tools`, `cmake`, Go >= 1.23, Rust >= 1.87.
 
 ```sh
-BASE=http://localhost:18080
+# 1. Verify host prerequisites
+./scripts/check-host.sh
 
-# Health check
-curl $BASE/healthz
+# 2. Fetch and verify the kernel source
+./scripts/fetch-kernel.sh
 
-# Chat -- streaming SSE
+# 3. Build the complete image (kernel + userland + initramfs + data.img)
+./scripts/build-image.sh
+
+# 4. Boot in QEMU
+./scripts/run-qemu.sh
+```
+
+The gateway is reachable at `http://localhost:18080` once the VM reports ready on serial.
+
+For inference with llama-server, see **[Inference Image](#inference-image)** below.
+
+Full host setup instructions: [docs/host-setup.md](docs/host-setup.md)
+
+---
+
+## Gateway API
+
+All endpoints require `Authorization: Bearer <token>` when `gateway_token` is set in `/data/etc/secrets.toml`.
+
+```sh
+export BASE=http://localhost:18080
+
+curl $BASE/healthz                        # Liveness
+curl $BASE/status                         # Full health summary
+curl $BASE/version                        # Version string
+curl $BASE/config                         # Effective config (secrets redacted)
+curl $BASE/models                         # Active model + installed GGUF list
+curl $BASE/tools                          # Registered agent tools
+curl $BASE/metrics                        # Prometheus counters
+curl $BASE/update/status                  # A/B slot state
+curl $BASE/telemetry/status               # Telemetry on/off
+
+# Streaming inference (SSE)
 curl -X POST $BASE/chat \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","parts":[{"type":"text","text":"Hello"}]}]}'
-
-# Effective configuration
-curl $BASE/config
-
-# Available tools
-curl $BASE/tools
-
-# Prometheus metrics
-curl $BASE/metrics
-
-# Health summary (all components)
-curl $BASE/status
-
-# Active model and installed models
-curl $BASE/models
-
-# A/B update slot state
-curl $BASE/update/status
-
-# Telemetry status (off by default)
-curl $BASE/telemetry/status
-
-# Hardware board info
-curl $BASE/board
 ```
 
-Add `-H "Authorization: Bearer YOUR_TOKEN"` to all endpoints when a
-`gateway_token` is configured in `/data/etc/secrets.toml`.
+**Endpoint reference:**
 
-### All endpoints
+| Endpoint | Method | Description |
+|---|---|---|
+| `/healthz` | GET | Agent and gateway liveness probe |
+| `/version` | GET | Service name and version string |
+| `/chat` | POST | Streaming SSE inference turn |
+| `/tools` | GET | List of registered agent tools |
+| `/metrics` | GET | Prometheus text format counters |
+| `/status` | GET | Human-readable health summary across all components |
+| `/config` | GET | Effective runtime configuration (no secrets) |
+| `/models` | GET | Active model manifest and available GGUF inventory |
+| `/update/status` | GET | A/B slot and last update result |
+| `/telemetry/status` | GET | Telemetry pipeline status |
+| `/board` | GET | Hardware board identification |
 
-| Endpoint | Method | Auth? | Description |
-|---|---|---|---|
-| `/healthz` | GET | yes | Agent + gateway liveness |
-| `/version` | GET | yes | Service and version string |
-| `/chat` | POST | yes | Streaming SSE inference turn |
-| `/tools` | GET | yes | List registered agent tools |
-| `/metrics` | GET | yes | Prometheus text counters |
-| `/status` | GET | yes | Human-readable health summary |
-| `/config` | GET | yes | Effective gateway config (no secrets) |
-| `/models` | GET | yes | Active model manifest + available GGUF list |
-| `/update/status` | GET | yes | A/B slot and last update state |
-| `/telemetry/status` | GET | yes | Telemetry enabled/disabled and last payload |
-| `/board` | GET | yes | Hardware board info |
+---
 
-## Model management
+## Inference Image
+
+The default image does not include `llama-server` (the binary is large and build time is significant). An opt-in CI workflow builds a fully inference-ready image with a baked-in model and uploads it as a downloadable artifact.
+
+**Trigger from the Actions tab:**
+
+```
+Workflow: "Build inference image (opt-in)"
+Inputs:
+  model_url   — GGUF download URL (default: Qwen2.5-0.5B-Instruct Q4_K_M)
+  model_name  — model name without extension
+```
+
+**Boot the artifact:**
 
 ```sh
-# Download the default model
+qemu-system-x86_64 \
+  -machine q35,accel=tcg \
+  -cpu Haswell \
+  -m 3072 -smp 4 \
+  -kernel bzImage \
+  -initrd initramfs.cpio.gz \
+  -drive file=data.img,format=raw,if=virtio,cache=writeback \
+  -netdev user,id=n,hostfwd=tcp::18081-:8081 \
+  -device virtio-net-pci,netdev=n \
+  -append "console=ttyS0,115200 nokaslr panic=5 loglevel=7"
+```
+
+**Query inference directly** (the `/chat` gateway path is not yet wired to the inference loop):
+
+```sh
+curl http://localhost:18081/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"local","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+Note: `-cpu Haswell` is required. The default `qemu64` CPU lacks SSSE3/BMI2, which llama.cpp baseline kernels require.
+
+---
+
+## Model Management
+
+```sh
+# Download the default model into /data/models
 bash scripts/fetch-model.sh
 
 # List installed models
 bash scripts/model-list.sh
 
-# Switch active model
+# Switch the active model
 bash scripts/model-activate.sh <model-name> --quantization Q4_K_M
 ```
 
-## A/B safe update
+---
 
-```sh
-# Stage a new rootfs to the inactive slot
-bash scripts/update.sh --url https://example.com/nuraos.ext4 --sha256 <hex>
-
-# Activate and reboot
-bash scripts/slot-select.sh set b && reboot
-
-# Roll back if the update is bad
-bash scripts/update.sh --rollback && reboot
-```
-
-## Provider configuration
-
-Run the interactive setup helper to choose a provider and write secrets:
+## Provider Configuration
 
 ```sh
 ./scripts/configure.sh
 ```
 
-Supported providers: `local` (llama.cpp on-device), `anthropic`, `openai`,
-`ollama` (via `NURA_OLLAMA=1`), `lm-studio` (via `NURA_LMSTUDIO=1`),
-`custom` (via `NURA_CUSTOM_ENDPOINT=http://...`).
+| Provider | Activation |
+|---|---|
+| `local` | Default. llama.cpp on-CPU via `llama-server`. |
+| `anthropic` | Set `ANTHROPIC_API_KEY` in `/data/etc/secrets.toml`. |
+| `openai` | Set `OPENAI_API_KEY` in `/data/etc/secrets.toml`. |
+| `ollama` | Set `NURA_OLLAMA=1` and point to the Ollama host. |
+| `lm-studio` | Set `NURA_LMSTUDIO=1`. |
+| `custom` | Set `NURA_CUSTOM_ENDPOINT=http://...`. |
 
-Provider can be overridden per turn with `"provider": "anthropic"` in the chat body.
+The active provider can be overridden per request with `"provider": "<name>"` in the chat body.
 
-## Smoke test
+---
+
+## A/B Safe Updates
 
 ```sh
-# Against a running gateway (default: localhost:8080)
+# Stage a new rootfs image to the inactive slot
+bash scripts/update.sh --url https://example.com/nuraos.ext4 --sha256 <hex>
+
+# Activate the staged slot and reboot
+bash scripts/slot-select.sh set b && reboot
+
+# Roll back to the previous slot
+bash scripts/update.sh --rollback && reboot
+```
+
+---
+
+## Smoke Test
+
+```sh
+# Against a local gateway (default: localhost:8080)
 bash scripts/smoke-test.sh
 
 # Against a remote target
-bash scripts/smoke-test.sh --base-url http://192.168.1.100:8080 --token mytoken
+bash scripts/smoke-test.sh --base-url http://192.168.1.100:8080 --token <token>
 ```
 
-## Repository conventions
-
-- One branch per phase: `phase-NN-short-slug`. No direct pushes to `main`.
-- Atomic conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `build:`,
-  `test:`, `refactor:`, `ci:`, `perf:`.
-- No em dash character anywhere (code, comments, docs, commits).
-- Prefer "explore" or "investigate" over "experience" in prose.
-- Secrets are never committed.
+---
 
 ## License
 
