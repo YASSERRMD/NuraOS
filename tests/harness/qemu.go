@@ -125,6 +125,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-display", "none",
 		"-serial", fmt.Sprintf("file:%s", serialLog),
 		"-device", "virtio-rng-pci",
+		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,

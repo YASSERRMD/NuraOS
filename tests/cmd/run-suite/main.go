@@ -122,8 +122,7 @@ func runSuite(ctx context.Context, name string, fn SuiteFunc, repoRoot string, r
 
 	opts := harness.QEMUOpts{
 		RepoRoot: repoRoot,
-		MemMB:    256,
-		CPUs:     1,
+		// MemMB/CPUs: use harness defaults (512MB, 2 CPUs) to match run-qemu.sh
 	}
 
 	inst, err := harness.BootQEMU(ctx, opts)
