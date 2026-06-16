@@ -94,36 +94,23 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
-	// nokaslr: disable KASLR so the kernel does not need early entropy from
-	// RDRAND before the virtio-rng device is available. KASLR runs in the
-	// decompressor phase, before any serial console is set up, so a failure
-	// there produces zero serial output and looks identical to a silent hang.
-	// earlyprintk=serial,ttyS0,115200: capture output before console_init().
-	// panic=5: reboot after 5 s so -no-reboot can exit QEMU on a kernel panic.
-	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
+	kernelArgs := "console=ttyS0,115200 panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// Build QEMU argument list. We use -display none so QEMU runs headlessly.
-	// -machine pc: use the classic i440fx+PIIX3 machine type instead of q35.
-	//   q35 has a more complex PCIe/ICH9 topology; pc is simpler and more proven
-	//   for direct-kernel boot with -kernel. We can switch to q35 once boot works.
-	// -serial stdio: map the guest serial port to QEMU's own stdout so the
-	//   harness can redirect it to a log file via cmd.Stdout. Most reliable path.
-	// -d cpu_reset,guest_errors: emit CPU reset and guest error events to stderr
-	//   (captured in qemu-stderr.log). Reveals triple-faults and BUS errors.
-	// virtio-rng-pci: provides hardware entropy once the guest OS is running.
+	// -nographic routes the guest serial port to QEMU's own stdout, matching
+	// scripts/run-qemu.sh. Using -display none + -serial stdio does NOT achieve
+	// the same routing; only -nographic correctly wires ttyS0 to stdio so
+	// cmd.Stdout captures kernel console output.
 	args := []string{
-		"-machine", "pc,accel=kvm:tcg",
+		"-machine", "q35,accel=kvm:tcg",
 		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
-		"-display", "none",
+		"-nographic",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
-		"-serial", "stdio",
-		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
@@ -145,7 +132,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	vmCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(vmCtx, "qemu-system-x86_64", args...)
 
-	// Redirect QEMU stdout → serial.log (serial stdio backend).
+	// Redirect QEMU stdout → serial.log (-nographic wires ttyS0 here).
 	// Redirect QEMU stderr → qemu.stderr (QEMU internal messages).
 	serialFile, err := os.Create(serialLog)
 	if err != nil {
