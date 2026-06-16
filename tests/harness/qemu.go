@@ -94,21 +94,22 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
-	// earlyprintk=serial,ttyS0,115200: enables very-early console output before
-	// the regular 8250 driver initialises, so kernel panics that occur before
-	// console_init() are captured in the serial log.
-	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=5 loglevel=7"
+	// nokaslr: disable KASLR so the kernel does not need early entropy from
+	// RDRAND before the virtio-rng device is available. KASLR runs in the
+	// decompressor phase, before any serial console is set up, so a failure
+	// there produces zero serial output and looks identical to a silent hang.
+	// earlyprintk=serial,ttyS0,115200: capture output before console_init().
+	// panic=5: reboot after 5 s so -no-reboot can exit QEMU on a kernel panic.
+	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
 	// Build QEMU argument list. We use -display none so QEMU runs headlessly.
-	// -serial file:PATH: QEMU writes serial output directly to the log file,
-	// bypassing the Unix socket mechanism entirely. This guarantees every byte
-	// is captured even if the kernel panics before console_init(), and removes
-	// any timing dependency on socket client connection.
-	// virtio-rng-pci: provides hardware entropy so the guest CSPRNG seeds
-	// immediately and gateway startup is not delayed by entropy starvation.
+	// -serial stdio: map the guest serial port to QEMU's own stdout so the
+	// harness can redirect it to a log file via cmd.Stdout. This completely
+	// bypasses chardev socket/file timing and is the most reliable capture path.
+	// virtio-rng-pci: provides hardware entropy once the guest OS is running.
 	args := []string{
 		"-machine", "q35,accel=kvm:tcg",
 		"-cpu", "host",
@@ -117,7 +118,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-display", "none",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
-		"-serial", "file:" + serialLog,
+		"-serial", "stdio",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
@@ -139,8 +140,19 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	vmCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(vmCtx, "qemu-system-x86_64", args...)
 
+	// Redirect QEMU stdout → serial.log (serial stdio backend).
+	// Redirect QEMU stderr → qemu.stderr (QEMU internal messages).
+	serialFile, err := os.Create(serialLog)
+	if err != nil {
+		cancel()
+		_ = os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("creating serial log: %w", err)
+	}
+	cmd.Stdout = serialFile
+
 	qemuStderr, err := os.Create(qemuStderrPath)
 	if err != nil {
+		_ = serialFile.Close()
 		cancel()
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("creating qemu stderr log: %w", err)
@@ -148,15 +160,12 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	cmd.Stderr = qemuStderr
 
 	if err := cmd.Start(); err != nil {
+		_ = serialFile.Close()
 		cancel()
 		_ = qemuStderr.Close()
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("starting qemu-system-x86_64: %w", err)
 	}
-
-	// QEMU writes serial output directly to serialLog via "-serial file:".
-	// No socket connection or handshake is needed; the file is created by QEMU
-	// when the first byte is written.
 
 	return &QEMUInstance{
 		APIPort:       apiPort,
