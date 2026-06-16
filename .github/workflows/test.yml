@@ -141,6 +141,18 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true' && success()
         run: ./scripts/build-image.sh
 
+      # Upload the built image so it can be downloaded and booted locally for
+      # debugging boot failures (kernel decompressor / serial console issues).
+      # Always runs -- on a cache hit the restored image/out/ is uploaded.
+      - name: Upload image artifacts (for local boot debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuraos-image
+          path: image/out/
+          retention-days: 3
+          if-no-files-found: warn
+
   # -----------------------------------------------------------------------
   # Compile the Go test harness binary once; the matrix jobs reuse it via
   # upload/download-artifact to avoid redundant builds.
