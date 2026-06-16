@@ -112,9 +112,14 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// handshake, no buffering, no lost bytes.  virtio-rng-pci seeds the guest
 	// CSPRNG from host entropy; -no-reboot converts the panic emergency_restart
 	// into a clean QEMU exit so the harness fast-fails on boot panic.
+	//
+	// Machine: pc (i440fx) is the traditional QEMU machine for direct kernel
+	// boot -- more battle-tested than q35 with -kernel bzImage.
+	// CPU: Westmere includes RDRAND-capable descendant features and is a stable
+	// well-known model under TCG; qemu64 lacks several features Linux 6.6 uses.
 	args := []string{
-		"-machine", "q35,accel=tcg",
-		"-cpu", "qemu64",
+		"-machine", "pc,accel=tcg",
+		"-cpu", "Westmere",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
