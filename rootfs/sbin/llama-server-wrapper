@@ -1,16 +1,40 @@
 #!/bin/sh
-# llama-server-wrapper -- launch llama-server with CPU-profile-aligned --threads.
+# llama-server-wrapper -- launch llama-server with the active model and a
+# CPU-profile-aligned thread count.
 #
 # Reads the thread count written by nura-cpu-apply at boot from
-# /run/nura-cpu-threads and passes it as --threads to the real llama-server
-# binary. Falls back to nproc (or 4) if the file is absent.
+# /run/nura-cpu-threads (falls back to nproc, then 4), resolves the active model
+# from the model manifest, and forwards the unit's args (--host, --port,
+# --log-disable, ...) verbatim.
 #
-# All additional arguments passed to this wrapper are forwarded verbatim, so
-# the unit file args (--host, --port, --log-disable, ...) work unchanged.
+# The model MUST be passed explicitly: llama-server exits immediately without
+# --model, so the unit file (which carries no --model) would crash-loop. The
+# path and context length come from the manifest written by fetch-model.sh /
+# model-activate.sh (/data/model.json; the agent also reads /data/models/model.json).
 
 THREADS=$(cat /run/nura-cpu-threads 2>/dev/null)
 if [ -z "${THREADS}" ] || ! [ "${THREADS}" -ge 1 ] 2>/dev/null; then
     THREADS=$(nproc 2>/dev/null || echo 4)
 fi
 
+MODEL_PATH=""
+CTX=""
+for manifest in /data/model.json /data/models/model.json; do
+    if [ -f "${manifest}" ]; then
+        MODEL_PATH=$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest}" 2>/dev/null | head -1)
+        CTX=$(sed -n 's/.*"context_length"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "${manifest}" 2>/dev/null | head -1)
+        [ -n "${MODEL_PATH}" ] && break
+    fi
+done
+
+if [ -n "${MODEL_PATH}" ] && [ -f "${MODEL_PATH}" ]; then
+    echo "[llama-server-wrapper] loading model: ${MODEL_PATH} (ctx=${CTX:-default})"
+    exec /sbin/llama-server \
+        --model "${MODEL_PATH}" \
+        --threads "${THREADS}" \
+        ${CTX:+--ctx-size "${CTX}"} \
+        "$@"
+fi
+
+echo "[llama-server-wrapper] WARNING: no model in /data/model.json; starting without --model"
 exec /sbin/llama-server --threads "${THREADS}" "$@"

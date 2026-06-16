@@ -1,0 +1,126 @@
+name: Build inference image (opt-in)
+
+# Opt-in, manual only: builds a NuraOS image that includes the llama.cpp
+# inference engine AND a small GGUF model baked into /data, then uploads it as
+# a downloadable artifact. Normal CI never runs this (it is slow and produces a
+# large artifact); trigger it from the Actions tab when you want an
+# inference-ready image to run locally.
+#
+# Run the result with a guest CPU that has SSSE3/BMI2 (the default qemu64 lacks
+# them), e.g.:
+#   qemu-system-x86_64 -machine q35,accel=tcg -cpu Haswell -m 3072 -smp 4 \
+#     -kernel image/out/bzImage -initrd image/out/initramfs.cpio.gz \
+#     -drive file=image/out/data.img,format=raw,if=virtio,cache=writeback \
+#     -netdev user,id=n,hostfwd=tcp::18081-:8081 -device virtio-net-pci,netdev=n \
+#     -append "console=ttyS0,115200 nokaslr panic=5 loglevel=7"
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_url:
+        description: "GGUF model URL to bake into /data/models"
+        required: false
+        default: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+      model_name:
+        description: "Model name (without .gguf extension)"
+        required: false
+        default: "qwen2.5-0.5b-instruct-q4_k_m"
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.23.4"
+
+jobs:
+  build:
+    name: Build inference-ready image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: services/go.mod
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.87.0"
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex \
+            libssl-dev libelf-dev \
+            cpio gzip musl-tools \
+            cmake ninja-build libclang-dev \
+            e2fsprogs xz-utils bzip2 qemu-system-x86
+
+      - name: Set up musl toolchain
+        run: ./scripts/setup-musl-ci.sh
+
+      - name: Fetch kernel source
+        run: ./scripts/fetch-kernel.sh
+
+      - name: Configure kernel
+        run: ./scripts/kernel-config.sh
+
+      - name: Fetch and build BusyBox
+        run: ./scripts/fetch-busybox.sh
+
+      - name: Fetch llama.cpp source
+        run: ./scripts/fetch-llama.sh
+
+      - name: Build NuraOS image (kernel + userland + llama-server)
+        run: ./scripts/build-image.sh
+
+      - name: Verify llama-server was built into the image
+        run: |
+          test -f rootfs/staging/sbin/llama-server \
+            || { echo "ERROR: llama-server not in staging; build-image did not build it"; exit 1; }
+          file rootfs/staging/sbin/llama-server
+
+      - name: Download model and bake it into /data
+        env:
+          MODEL_URL: ${{ github.event.inputs.model_url }}
+          MODEL_NAME: ${{ github.event.inputs.model_name }}
+        run: |
+          set -euo pipefail
+          STAGE="$(mktemp -d)"
+          mkdir -p "${STAGE}/models" "${STAGE}/logs" "${STAGE}/sessions" "${STAGE}/etc" "${STAGE}/journal"
+          # fetch-model.sh writes the GGUF to <model-dir> and the manifest to
+          # <model-dir>/../model.json (i.e. ${STAGE}/model.json).
+          ./scripts/fetch-model.sh \
+            --model-dir "${STAGE}/models" \
+            --model-url "${MODEL_URL}" \
+            --model-name "${MODEL_NAME}"
+          # The agent reads /data/models/model.json; copy the manifest there too.
+          cp "${STAGE}/model.json" "${STAGE}/models/model.json"
+          # Size the data image to model + 512 MiB headroom.
+          MODEL_BYTES=$(stat -c %s "${STAGE}/models/${MODEL_NAME}.gguf")
+          SIZE_MB=$(( MODEL_BYTES / 1024 / 1024 + 512 ))
+          echo "data.img size: ${SIZE_MB} MiB"
+          rm -f image/out/data.img
+          mke2fs -t ext4 -L nura-data -d "${STAGE}" -F \
+            -E lazy_itable_init=0,lazy_journal_init=0 \
+            image/out/data.img "${SIZE_MB}m"
+          ls -lh image/out/
+
+      - name: Upload inference-ready image
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuraos-inference-image
+          path: |
+            image/out/bzImage
+            image/out/initramfs.cpio.gz
+            image/out/data.img
+            image/out/manifest.json
+            image/out/kernel.config
+          retention-days: 7
+          if-no-files-found: warn
