@@ -75,6 +75,12 @@ CONFIG_PCI_MSI=y
 CONFIG_HZ_250=y
 CONFIG_POSIX_TIMERS=y
 
+# ----- Kernel compression: gzip (XZ from tinyconfig needs more decompressor
+# stack than gzip; with CC_OPTIMIZE_FOR_SIZE the 4KB boot stack can overflow
+# during XZ decompression -> triple fault before any serial output) -----
+CONFIG_KERNEL_GZIP=y
+# CONFIG_KERNEL_XZ is not set
+
 # ----- Modules: disabled -----
 CONFIG_MODULES=n
 

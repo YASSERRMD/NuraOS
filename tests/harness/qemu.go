@@ -21,9 +21,9 @@ type QEMUOpts struct {
 	Initramfs string
 	// DataImage is the path to the /data ext4 image. If empty, /data is omitted.
 	DataImage string
-	// MemMB is RAM in megabytes (default: 256).
+	// MemMB is RAM in megabytes (default: 512).
 	MemMB int
-	// CPUs is the vCPU count (default: 1).
+	// CPUs is the vCPU count (default: 2).
 	CPUs int
 	// ExtraKernelArgs are appended verbatim to the kernel command line.
 	ExtraKernelArgs string
@@ -125,7 +125,12 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-display", "none",
 		"-serial", fmt.Sprintf("file:%s", serialLog),
 		"-device", "virtio-rng-pci",
-		"-d", "cpu_reset,guest_errors",
+		// -d int logs every exception/interrupt delivered to the guest so we
+		// can see the exact exception type, address, and error code that
+		// initiates the triple-fault chain.  Under -kernel (no BIOS) with
+		// IRQs masked during early boot, output is compact: just the
+		// exception chain that causes the reset.
+		"-d", "int,cpu_reset",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
