@@ -47,10 +47,6 @@ type QEMUInstance struct {
 	// empty proves the unix socket is losing data; both empty proves the kernel
 	// is not writing to any UART at all.
 	EarlySerialLogPath string
-	// PIOLogPath is the path to QEMU's port-I/O debug log (-D -d pio). Search
-	// it for "0x3f8" or "0x2f8" writes to see if the kernel ever wrote to a
-	// UART register. First 2 MB is captured in boot evidence.
-	PIOLogPath string
 	// StderrLogPath is the path to the file capturing QEMU process stderr.
 	StderrLogPath string
 	// RepoRoot is the NuraOS repository root used to boot this instance.
@@ -103,7 +99,6 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	serialSock := filepath.Join(tmpDir, "serial.sock")
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	earlySerialLog := filepath.Join(tmpDir, "early-serial.log")
-	pioLog := filepath.Join(tmpDir, "qemu-pio.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
 	// console=ttyS0 and console=ttyS1: write kernel messages to both the unix
@@ -137,12 +132,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// -chardev file … -device isa-serial: ttyS1 direct-file serial backend.
 	//   QEMU writes here without any socket; if this log has content while
 	//   serial.log (ttyS0) is empty the unix socket backend is the culprit.
-	// -D pioLog -d cpu_reset,guest_errors,pio: redirect QEMU debug events to a
-	//   separate file so stderr stays clean.  The 'pio' flag logs every port
-	//   I/O access (PortRead/PortWrite). Searching for 0x3f8/0x2f8 in this log
-	//   tells us definitively whether the kernel ever issued a UART write.  The
-	//   log can be large; CaptureEvidence truncates it to 2 MB.
-	// -d cpu_reset,guest_errors: also captures CPU resets and guest errors.
+	// -d cpu_reset,guest_errors: QEMU debug events; output goes to qemu.stderr.
 	// virtio-rng-pci: provides hardware entropy to the guest via the virtio
 	//   bus, seeding the kernel CSPRNG early without relying on host RDRAND.
 	args := []string{
@@ -156,8 +146,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-device", "isa-serial,chardev=earlyserial",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
-		"-D", pioLog,
-		"-d", "cpu_reset,guest_errors,pio",
+		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
@@ -234,7 +223,6 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		MetricsPort:        metricsPort,
 		SerialLogPath:      serialLog,
 		EarlySerialLogPath: earlySerialLog,
-		PIOLogPath:         pioLog,
 		StderrLogPath:      qemuStderrPath,
 		RepoRoot:           opts.RepoRoot,
 		cmd:           cmd,

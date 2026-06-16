@@ -44,10 +44,6 @@ func CaptureEvidence(ctx context.Context, inst *QEMUInstance, result *Result, bu
 	// losing data; both empty proves the kernel is not writing to any UART.
 	captureFile(inst.EarlySerialLogPath, filepath.Join(dir, "early-serial.log"))
 
-	// QEMU port-I/O log (-D -d pio).  Truncated to 2 MB to bound artifact
-	// size. Search for "0x3f8" or "0x2f8" to confirm UART write attempts.
-	captureFileTruncated(inst.PIOLogPath, filepath.Join(dir, "qemu-pio.log"), 2<<20)
-
 	// Metrics snapshot.
 	if path := captureEndpoint(ctx, inst, "/metrics", filepath.Join(dir, "metrics.txt")); path != "" {
 		result.Evidence.MetricsSnapshot = path
@@ -101,25 +97,6 @@ func captureFile(src, dst string) {
 		return
 	}
 	_ = os.WriteFile(dst, data, 0o644)
-}
-
-// captureFileTruncated copies at most maxBytes from the start of src to dst.
-// Used for large diagnostic logs (e.g. QEMU PIO trace) to bound artifact size.
-func captureFileTruncated(src, dst string, maxBytes int64) {
-	if src == "" {
-		return
-	}
-	f, err := os.Open(src)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-	out, err := os.Create(dst)
-	if err != nil {
-		return
-	}
-	defer func() { _ = out.Close() }()
-	_, _ = io.Copy(out, io.LimitReader(f, maxBytes))
 }
 
 // captureEndpoint GETs an endpoint on the guest, redacts the response, and

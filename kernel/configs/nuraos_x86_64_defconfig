@@ -41,6 +41,12 @@ CONFIG_VT=n
 # ----- Printk -----
 CONFIG_PRINTK=y
 CONFIG_EARLY_PRINTK=y
+# PRINTK_KTHREADS (Linux 6.6 default=y) routes console writes through a kernel
+# thread.  In early boot (before kthread_run() is ever called) there is no
+# thread to do the write, so panic() messages are silently dropped even though
+# earlycon/earlyprintk are registered.  Disable it to force synchronous legacy
+# printk behaviour everywhere, including early-boot panics.
+CONFIG_PRINTK_KTHREADS=n
 
 # ----- virtio block -----
 CONFIG_VIRTIO=y
