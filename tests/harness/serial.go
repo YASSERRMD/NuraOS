@@ -1,69 +1,77 @@
 package harness
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
-	"io"
-	"net"
 	"os"
 	"sync"
 	"time"
 )
 
-// SerialClient provides read/write access to the VM serial console via the
-// UNIX socket created by QEMU's -serial unix:PATH,server,nowait option.
+// SerialClient captures and searches serial console output written by QEMU
+// to a file via the -serial file:PATH chardev backend. Polling the file
+// avoids any race between harness connection timing and early kernel output:
+// QEMU writes bytes the moment the guest generates them, regardless of when
+// the harness starts reading.
 type SerialClient struct {
-	conn net.Conn
-	log  *os.File
-	mu   sync.RWMutex
-	buf  bytes.Buffer
-	done chan struct{}
+	logPath   string
+	mu        sync.RWMutex
+	buf       bytes.Buffer
+	closeOnce sync.Once
+	stopCh    chan struct{}
+	doneCh    chan struct{}
 }
 
-// newSerialClient starts the background read loop that copies serial output
-// into the in-memory buffer and the log file simultaneously.
-func newSerialClient(conn net.Conn, log *os.File) *SerialClient {
+// newSerialClient starts a background goroutine that tails logPath, appending
+// new bytes to the in-memory buffer as QEMU writes them.
+func newSerialClient(logPath string) *SerialClient {
 	s := &SerialClient{
-		conn: conn,
-		log:  log,
-		done: make(chan struct{}),
+		logPath: logPath,
+		stopCh:  make(chan struct{}),
+		doneCh:  make(chan struct{}),
 	}
-	go s.readLoop()
+	go s.pollLoop()
 	return s
 }
 
-// readLoop drains the serial socket byte-by-byte into the buffer and log file.
-// It exits when the connection is closed (normal on VM shutdown).
-func (s *SerialClient) readLoop() {
-	defer close(s.done)
-	r := bufio.NewReader(s.conn)
+// pollLoop reads new bytes appended to the serial log file every 100 ms.
+func (s *SerialClient) pollLoop() {
+	defer close(s.doneCh)
+	var offset int64
 	for {
-		b, err := r.ReadByte()
-		if err != nil {
-			if err != io.EOF {
-				// Connection closed; expected on VM shutdown or harness teardown.
-			}
+		select {
+		case <-s.stopCh:
+			// Final read to capture any bytes written since the last poll.
+			s.appendFrom(offset)
 			return
+		case <-time.After(100 * time.Millisecond):
 		}
-		s.mu.Lock()
-		s.buf.WriteByte(b)
-		s.mu.Unlock()
-		if s.log != nil {
-			_, _ = s.log.Write([]byte{b})
-		}
+		offset = s.appendFrom(offset)
 	}
 }
 
-// SendLine writes a single command line to the serial console. It appends
-// a newline, which triggers the REPL to process the command.
-func (s *SerialClient) SendLine(cmd string) error {
-	_, err := s.conn.Write([]byte(cmd + "\n"))
-	return err
+// appendFrom reads bytes at offset from the log file into the buffer.
+func (s *SerialClient) appendFrom(offset int64) int64 {
+	data, err := os.ReadFile(s.logPath)
+	if err != nil || int64(len(data)) <= offset {
+		return offset
+	}
+	s.mu.Lock()
+	s.buf.Write(data[offset:])
+	s.mu.Unlock()
+	return int64(len(data))
 }
 
-// WaitForPattern polls the serial buffer until the pattern string appears or
-// the timeout elapses. It uses short-interval polling rather than a fixed sleep.
+// SendLine is not supported with the file chardev backend (ttyS0 is write-only
+// from the host side). Tests that require REPL writes must skip themselves.
+func (s *SerialClient) SendLine(_ string) error {
+	return fmt.Errorf("SendLine: serial uses file backend; host writes not supported")
+}
+
+// CanWrite reports whether the serial client supports sending commands.
+func (s *SerialClient) CanWrite() bool { return false }
+
+// WaitForPattern blocks until pattern appears in the serial log or timeout elapses.
 func (s *SerialClient) WaitForPattern(pattern string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	needle := []byte(pattern)
@@ -79,7 +87,7 @@ func (s *SerialClient) WaitForPattern(pattern string, timeout time.Duration) err
 	return fmt.Errorf("pattern %q not found in serial output within %s", pattern, timeout)
 }
 
-// Snapshot returns a copy of the serial buffer contents captured so far.
+// Snapshot returns a copy of the serial log captured so far.
 func (s *SerialClient) Snapshot() []byte {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -88,11 +96,8 @@ func (s *SerialClient) Snapshot() []byte {
 	return out
 }
 
-// close shuts down the read loop and closes the log file.
-// It does NOT close the underlying connection (managed by QEMUInstance).
+// close stops the poll loop and waits for it to exit.
 func (s *SerialClient) close() {
-	if s.log != nil {
-		_ = s.log.Close()
-	}
-	<-s.done
+	s.closeOnce.Do(func() { close(s.stopCh) })
+	<-s.doneCh
 }

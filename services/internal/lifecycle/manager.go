@@ -272,7 +272,7 @@ func (m *Manager) launchSocketUnit(ctx context.Context, u *unit.Unit, holder *so
 
 		var args []string
 		if u.User != "" && u.User != "root" {
-			args = []string{"su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
+			args = []string{"/bin/su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
 		} else {
 			args = append([]string{u.Exec}, u.Args...)
 		}
@@ -297,14 +297,15 @@ func (m *Manager) launchSocketUnit(ctx context.Context, u *unit.Unit, holder *so
 			"LISTEN_FDS=1",
 			fmt.Sprintf("LISTEN_PID=%d", os.Getpid()),
 		)
-		f.Close()
 
 		if err := cmd.Start(); err != nil {
+			f.Close()
 			m.log.Error("socket-activated start failed", "name", u.Name, "err", err)
 			_ = status.transition(StateFailed, "start: "+err.Error())
 			cancel()
 			return
 		}
+		f.Close()
 
 		if m.journal != nil {
 			pid := cmd.Process.Pid
@@ -534,7 +535,7 @@ func (m *Manager) restartLoop(ctx context.Context, u *unit.Unit, run *serviceRun
 func (m *Manager) spawnProcess(ctx context.Context, u *unit.Unit) (*exec.Cmd, <-chan struct{}, error) {
 	var args []string
 	if u.User != "" && u.User != "root" {
-		args = []string{"su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
+		args = []string{"/bin/su", "-s", "/bin/sh", u.User, "-c", shellJoin(u.Exec, u.Args)}
 	} else {
 		args = append([]string{u.Exec}, u.Args...)
 	}

@@ -127,6 +127,9 @@ if [ "${SKIP_USERLAND}" -eq 0 ]; then
     log "building gateway ..."
     bash "${SCRIPT_DIR}/build-gateway.sh"
 
+    log "building nura-manager ..."
+    bash "${SCRIPT_DIR}/build-manager.sh"
+
     # llama-server is optional; skip if not fetched.
     if [ -d "${REPO_ROOT}/vendor/llama.cpp" ] || [ -d "${REPO_ROOT}/../llama.cpp" ]; then
         log "building llama-server ..."

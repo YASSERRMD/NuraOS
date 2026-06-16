@@ -102,13 +102,19 @@ func (h *SlogJournalHandler) WithGroup(name string) slog.Handler {
 
 // NewRouter returns a slog.Handler implementing severity-based routing:
 //   - all records are written to jw (if non-nil)
-//   - only Warning-and-above records are written to console
+//   - Info-and-above records are written to console
+//
+// On NuraOS the console IS the serial port (ttyS0), which is the operator's
+// only live view of a headless boot, so Info-level lifecycle logs
+// ("nura-manager starting", "all units started", ...) must reach it -- not just
+// the on-disk journal. (The integration suites assert that serial carries
+// INFO-level structured log lines.) The journal still captures the full stream.
 //
 // service is used as the journal record's svc field for manager-internal logs.
 // When jw is nil, the full log stream is written to console at Info level.
 func NewRouter(jw *Writer, console io.Writer, service string) slog.Handler {
 	consoleHandler := slog.NewTextHandler(console, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
+		Level: slog.LevelInfo,
 	})
 	if jw == nil {
 		return slog.NewTextHandler(console, &slog.HandlerOptions{

@@ -57,11 +57,11 @@ func main() {
 		port = defaultPort
 	}
 
-	// Bind policy: loopback-only by default; LAN requires explicit opt-in.
-	host := "127.0.0.1"
-	if os.Getenv("GATEWAY_BIND_LAN") == "1" {
-		host = "0.0.0.0"
-		slog.Warn("LAN bind enabled; gateway is accessible from the network")
+	// Bind policy: all interfaces by default so QEMU SLIRP hostfwd reaches the
+	// gateway. Set GATEWAY_BIND_LAN=0 to restrict to loopback only.
+	host := "0.0.0.0"
+	if os.Getenv("GATEWAY_BIND_LAN") == "0" {
+		host = "127.0.0.1"
 	}
 
 	// Bearer-token auth: load from secrets file; reload on SIGHUP.

@@ -41,7 +41,7 @@ jobs:
       - name: Compute image cache key
         id: cache-key
         run: |
-          KEY=$(find scripts/ agent/ services/ rootfs/ \
+          KEY=$(find scripts/ agent/ services/ rootfs/ kernel/configs/ \
                 -type f -not -path '*/.git/*' | sort \
                 | xargs sha256sum 2>/dev/null | sha256sum | cut -c1-16)
           echo "key=nuraos-image-v1-${KEY}" >> "$GITHUB_OUTPUT"
@@ -103,11 +103,27 @@ jobs:
       # Expose the apt-installed musl-gcc at the path fetch-busybox.sh expects.
       # Building musl from source via fetch-musl.sh is not needed in CI because
       # musl-tools (installed above) already provides a working musl-gcc.
+      # Also copy Linux kernel headers into musl's include tree: BusyBox init
+      # and libbb include <linux/vt.h>, <linux/capability.h>, etc., which are
+      # invisible to musl-gcc because it uses -nostdinc.  The system musl
+      # include tree at /usr/include/x86_64-linux-musl is not world-writable,
+      # so sudo is required.  Kernel headers contain no glibc symbols and
+      # cannot shadow musl's own C library headers.
       - name: Set up musl toolchain
         if: steps.cache.outputs.cache-hit != 'true' && success()
         run: |
           mkdir -p third_party/musl-install/bin
           ln -sf "$(command -v musl-gcc)" third_party/musl-install/bin/musl-gcc
+          MUSL_INC=/usr/include/x86_64-linux-musl
+          if [ ! -d "${MUSL_INC}/linux" ]; then
+            sudo cp -r /usr/include/linux       "${MUSL_INC}/linux"
+            sudo cp -r /usr/include/asm-generic "${MUSL_INC}/asm-generic" || true
+            if [ -d /usr/include/x86_64-linux-gnu/asm ]; then
+              sudo cp -r /usr/include/x86_64-linux-gnu/asm "${MUSL_INC}/asm"
+            elif [ -d /usr/include/asm ]; then
+              sudo cp -r /usr/include/asm "${MUSL_INC}/asm"
+            fi
+          fi
 
       - name: Fetch kernel source
         if: steps.cache.outputs.cache-hit != 'true' && success()
@@ -124,6 +140,18 @@ jobs:
       - name: Build NuraOS image
         if: steps.cache.outputs.cache-hit != 'true' && success()
         run: ./scripts/build-image.sh
+
+      # Upload the built image so it can be downloaded and booted locally for
+      # debugging boot failures (kernel decompressor / serial console issues).
+      # Always runs -- on a cache hit the restored image/out/ is uploaded.
+      - name: Upload image artifacts (for local boot debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuraos-image
+          path: image/out/
+          retention-days: 3
+          if-no-files-found: warn
 
   # -----------------------------------------------------------------------
   # Compile the Go test harness binary once; the matrix jobs reuse it via
@@ -208,6 +236,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends qemu-system-x86
+
+      - name: Enable KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Run suite
         id: run-suite

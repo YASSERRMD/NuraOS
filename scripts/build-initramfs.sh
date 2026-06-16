@@ -40,10 +40,14 @@ install -m 755 "${BB_SRC}" "${STAGING}/bin/busybox"
 
 log "creating applet symlinks ..."
 # Core applets needed by /init and basic operation.
+# su MUST be in /bin/su: nura-manager launches every non-root service via the
+# absolute path "/bin/su" (services/internal/lifecycle/manager.go). If su lives
+# only at /sbin/su, that exec fails with "/bin/su: not found" and every service
+# (gateway, nura-agent, llama-server) crash-loops -> /healthz never comes up.
 APPLETS_BIN="sh cat echo ls mkdir ln cp mv rm chmod chown find grep sed \
-    sort wc head tail sleep env uname date dmesg kill killall ps"
+    sort wc head tail sleep env uname date dmesg kill killall ps su"
 APPLETS_SBIN="init halt poweroff reboot mount umount switch_root pivot_root \
-    ip ping udhcpc mknod su mdev e2fsck fsck"
+    ip ping udhcpc mknod mdev e2fsck fsck"
 
 for applet in ${APPLETS_BIN}; do
     ln -sf /bin/busybox "${STAGING}/bin/${applet}"

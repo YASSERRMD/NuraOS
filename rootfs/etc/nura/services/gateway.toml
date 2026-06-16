@@ -1,5 +1,5 @@
 name        = "gateway"
-description = "NuraOS HTTP gateway (socket-activated)"
+description = "NuraOS HTTP gateway"
 exec        = "/sbin/gateway"
 type        = "longrun"
 user        = "nura-gw"
@@ -28,9 +28,9 @@ url     = "http://127.0.0.1:8080/healthz"
 timeout = 30
 
 [socket_activation]
-enabled      = true
+enabled      = false
 network      = "tcp"
-address      = "127.0.0.1:8080"
+address      = "0.0.0.0:8080"
 idle_timeout = 300
 
 [namespaces]

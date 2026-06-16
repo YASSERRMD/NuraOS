@@ -61,6 +61,26 @@ tar -C "${REPO_ROOT}/third_party" -xjf "${TARBALL}"
 [ -f "${BB_CONFIG}" ] || die "BusyBox config not found: ${BB_CONFIG}"
 cp "${BB_CONFIG}" "${SOURCE_DIR}/.config"
 
+# Copy Linux kernel headers into musl's include tree (local-dev path only).
+# BusyBox init and libbb need <linux/vt.h>, <linux/capability.h>, etc.
+# musl-gcc uses -nostdinc so kernel headers must sit in the musl include tree.
+# When musl was built from source via fetch-musl.sh the include tree is at
+# INSTALL_DIR/include; copy there if it exists and linux/ is missing.
+# In CI, musl comes from apt-installed musl-tools; the CI workflow copies
+# kernel headers into /usr/include/x86_64-linux-musl via the
+# "Set up musl toolchain" step (see .github/workflows/test.yml).
+MUSL_INC="${INSTALL_DIR}/include"
+if [ -d "${MUSL_INC}" ] && [ -d /usr/include/linux ] && [ ! -d "${MUSL_INC}/linux" ]; then
+    log "copying Linux kernel headers into ${MUSL_INC} ..."
+    cp -r /usr/include/linux       "${MUSL_INC}/linux"
+    cp -r /usr/include/asm-generic "${MUSL_INC}/asm-generic" 2>/dev/null || true
+    if [ -d /usr/include/x86_64-linux-gnu/asm ]; then
+        cp -r /usr/include/x86_64-linux-gnu/asm "${MUSL_INC}/asm"
+    elif [ -d /usr/include/asm ]; then
+        cp -r /usr/include/asm "${MUSL_INC}/asm"
+    fi
+fi
+
 # Build.
 log "building busybox (static musl) ..."
 # BusyBox's vendored kconfig does not expose 'olddefconfig'. Pipe yes "" into
@@ -75,12 +95,23 @@ yes "" | make -C "${SOURCE_DIR}" \
     CONFIG_STATIC=y \
     oldconfig
 set -o pipefail
+# Force-disable MTD/UBI tools: these need mtd/mtd-user.h and mtd/ubi-user.h
+# which are not in the musl include tree (not installed by musl-tools).
+# NANDDUMP also selects NANDWRITE via kconfig 'select', so patch directly.
+sed -i "s/^CONFIG_NANDDUMP=[ym]/CONFIG_NANDDUMP=n/;
+        s/^CONFIG_NANDWRITE=[ym]/CONFIG_NANDWRITE=n/;
+        s/^CONFIG_UBIATTACH=[ym]/CONFIG_UBIATTACH=n/;
+        s/^CONFIG_UBIDETACH=[ym]/CONFIG_UBIDETACH=n/;
+        s/^CONFIG_UBIMKVOL=[ym]/CONFIG_UBIMKVOL=n/;
+        s/^CONFIG_UBIRMVOL=[ym]/CONFIG_UBIRMVOL=n/;
+        s/^CONFIG_UBIRSVOL=[ym]/CONFIG_UBIRSVOL=n/;
+        s/^CONFIG_UBIUPDATEVOL=[ym]/CONFIG_UBIUPDATEVOL=n/;
+        s/^CONFIG_UBIRENAME=[ym]/CONFIG_UBIRENAME=n/" "${SOURCE_DIR}/.config"
 make -C "${SOURCE_DIR}" \
     CC="${MUSL_GCC}" \
     HOSTCC=gcc \
     LDFLAGS="-static" \
     CONFIG_STATIC=y \
-    EXTRA_CFLAGS="-isystem /usr/include" \
     -j"$(nproc 2>/dev/null || echo 4)"
 
 BB_BIN="${SOURCE_DIR}/busybox"

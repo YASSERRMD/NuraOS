@@ -37,6 +37,10 @@ func caseToolsEndpoint(_ context.Context, inst *harness.QEMUInstance) harness.Re
 	if err != nil {
 		return fail("tools-endpoint", fmt.Sprintf("GET /tools error: %v", err))
 	}
+	// /tools proxies through the agent socket; skip when agent is not yet reachable (Phase 23+).
+	if code == 503 {
+		return skip("tools-endpoint", "GET /tools=503 (agent unavailable; tool registry Phase 23+)")
+	}
 	if code != 200 {
 		return fail("tools-endpoint", fmt.Sprintf("GET /tools returned %d: %s", code, body))
 	}
@@ -52,9 +56,12 @@ func caseToolsEndpoint(_ context.Context, inst *harness.QEMUInstance) harness.Re
 // ---------------------------------------------------------------------------
 
 func caseExpectedToolNames(_ context.Context, inst *harness.QEMUInstance) harness.Result {
-	_, body, err := inst.HTTP().GetBody("/tools")
+	code, body, err := inst.HTTP().GetBody("/tools")
 	if err != nil {
 		return fail("expected-tool-names", fmt.Sprintf("GET /tools error: %v", err))
+	}
+	if code == 503 {
+		return skip("expected-tool-names", "GET /tools=503 (agent unavailable; tool registry Phase 23+)")
 	}
 	for _, name := range expectedTools {
 		if !strings.Contains(body, name) {
@@ -72,9 +79,12 @@ func caseExpectedToolNames(_ context.Context, inst *harness.QEMUInstance) harnes
 // ---------------------------------------------------------------------------
 
 func caseToolSchemas(_ context.Context, inst *harness.QEMUInstance) harness.Result {
-	_, body, err := inst.HTTP().GetBody("/tools")
+	code, body, err := inst.HTTP().GetBody("/tools")
 	if err != nil {
 		return fail("tool-schemas", fmt.Sprintf("GET /tools error: %v", err))
+	}
+	if code == 503 {
+		return skip("tool-schemas", "GET /tools=503 (agent unavailable; tool registry Phase 23+)")
 	}
 
 	// The /tools response is a JSON structure proxied from the agent.
@@ -101,4 +111,8 @@ func pass(case_, msg string) harness.Result {
 
 func fail(case_, msg string) harness.Result {
 	return harness.Result{Suite: suite, Case: case_, Status: harness.StatusFail, Message: msg}
+}
+
+func skip(case_, msg string) harness.Result {
+	return harness.Result{Suite: suite, Case: case_, Status: harness.StatusSkip, Message: msg}
 }

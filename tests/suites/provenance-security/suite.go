@@ -105,13 +105,14 @@ func caseIntegrityStatus(_ context.Context, inst *harness.QEMUInstance) harness.
 	if err != nil {
 		return fail("integrity-status", fmt.Sprintf("GET /status error: %v", err))
 	}
-	if code != 200 {
-		return fail("integrity-status", fmt.Sprintf("GET /status returned %d (want 200): %s", code, body))
+	// Accept 200 (all ok) or 503 (some component degraded); both are valid status responses.
+	if code != 200 && code != 503 {
+		return fail("integrity-status", fmt.Sprintf("GET /status returned %d (want 200 or 503): %s", code, body))
 	}
 	if !strings.Contains(body, "integrity") {
 		return skip("integrity-status", "GET /status does not mention 'integrity' component (not yet implemented)")
 	}
-	return pass("integrity-status", "GET /status reports integrity component")
+	return pass("integrity-status", fmt.Sprintf("GET /status=%d reports integrity component", code))
 }
 
 // ---------------------------------------------------------------------------

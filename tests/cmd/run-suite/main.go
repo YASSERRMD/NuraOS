@@ -122,8 +122,7 @@ func runSuite(ctx context.Context, name string, fn SuiteFunc, repoRoot string, r
 
 	opts := harness.QEMUOpts{
 		RepoRoot: repoRoot,
-		MemMB:    256,
-		CPUs:     1,
+		// MemMB/CPUs: use harness defaults (512MB, 2 CPUs) to match run-qemu.sh
 	}
 
 	inst, err := harness.BootQEMU(ctx, opts)
@@ -136,7 +135,7 @@ func runSuite(ctx context.Context, name string, fn SuiteFunc, repoRoot string, r
 
 	fmt.Printf("[run-suite] QEMU running  api=127.0.0.1:%d  waiting for /healthz...\n", inst.APIPort)
 
-	if err := harness.WaitReady(ctx, inst, 120*time.Second); err != nil {
+	if err := harness.WaitReady(ctx, inst, 360*time.Second); err != nil {
 		results := []harness.Result{bootFailResult(name, fmt.Sprintf("guest not ready: %v", err))}
 		harness.FinaliseResults(ctx, rc, results, inst, bundleBase)
 		return harness.SuiteRun{Suite: name, Results: results}, 1

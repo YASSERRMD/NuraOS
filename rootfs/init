@@ -250,8 +250,13 @@ if [ -n "${DATA_DEV}" ]; then
         FSCK_RC=$?
     fi
 
-    if [ "${FSCK_RC}" -le 1 ]; then
-        # 0 = filesystem clean, 1 = errors corrected -- safe to mount rw.
+    # e2fsck exit codes: 0 = clean, 1 = errors corrected (both safe to mount rw).
+    # 127 = e2fsck binary not present (the minimal initramfs ships only BusyBox,
+    # which has no ext4 checker). The image's data.img is a freshly-built, clean
+    # ext4, so "no checker available" must NOT force a read-only recovery mount --
+    # treat it as clean and mount rw.
+    if [ "${FSCK_RC}" -le 1 ] || [ "${FSCK_RC}" -eq 127 ]; then
+        # 0 = filesystem clean, 1 = errors corrected, 127 = no checker -- mount rw.
         log "mounting /data from ${DATA_DEV} (${DATA_MOUNT_OPTS}) ..."
         if mount -t ext4 -o "${DATA_MOUNT_OPTS}" "${DATA_DEV}" /data 2>/dev/null; then
             log "/data mounted (durable)"
