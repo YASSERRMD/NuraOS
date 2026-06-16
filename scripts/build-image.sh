@@ -130,8 +130,12 @@ if [ "${SKIP_USERLAND}" -eq 0 ]; then
     log "building nura-manager ..."
     bash "${SCRIPT_DIR}/build-manager.sh"
 
-    # llama-server is optional; skip if not fetched.
-    if [ -d "${REPO_ROOT}/vendor/llama.cpp" ] || [ -d "${REPO_ROOT}/../llama.cpp" ]; then
+    # llama-server is optional; skip if not fetched. fetch-llama.sh clones into
+    # third_party/llama-cpp (matching build-llama.sh's SRC); also accept the
+    # legacy vendor/ and sibling ../llama.cpp locations.
+    if [ -d "${REPO_ROOT}/third_party/llama-cpp/.git" ] || \
+       [ -d "${REPO_ROOT}/vendor/llama.cpp" ] || \
+       [ -d "${REPO_ROOT}/../llama.cpp" ]; then
         log "building llama-server ..."
         bash "${SCRIPT_DIR}/build-llama.sh" || log "WARNING: llama-server build skipped"
     else

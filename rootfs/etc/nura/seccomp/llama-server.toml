@@ -13,8 +13,12 @@ syscalls = [
   "getresuid", "getresgid",
   "setpgid", "getpgid", "setsid",
 
-  # process management (llama uses threads via clone)
-  "clone", "clone3",
+  # process management (llama uses threads via clone). fork/vfork are required
+  # because llama-server is launched through a BusyBox shell wrapper
+  # (llama-server-wrapper) whose command substitutions fork via the vfork
+  # syscall under musl -- without these the wrapper dies with
+  # "can't fork: Operation not permitted" before llama-server ever starts.
+  "clone", "clone3", "fork", "vfork",
   "exit", "exit_group",
   "kill", "tgkill",
   "getpid", "getppid", "gettid",

@@ -30,6 +30,12 @@ fi
 
 mkdir -p "${BUILD_DIR}" "${STAGING}/sbin"
 
+# Flag notes:
+#   LLAMA_CURL=OFF / GGML_OPENMP=OFF -- required for a fully static (-static)
+#     musl link; otherwise the final link fails pulling in dynamic libcurl/libgomp.
+#   GGML_AVX=OFF (+AVX2/F16C/FMA off) -- baseline build that runs on the QEMU
+#     guest CPU. AVX is not available under -cpu qemu64; even this baseline needs
+#     SSSE3/BMI2, so boot the guest with -cpu Haswell (or newer) to run inference.
 echo "Configuring llama.cpp (CPU-only, static musl) ..."
 cmake -S "${SRC}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
@@ -42,8 +48,10 @@ cmake -S "${SRC}" -B "${BUILD_DIR}" \
     -DLLAMA_BUILD_SERVER=ON \
     -DLLAMA_BUILD_TESTS=OFF \
     -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_CURL=OFF \
+    -DGGML_OPENMP=OFF \
     -DGGML_NATIVE=OFF \
-    -DGGML_AVX=ON \
+    -DGGML_AVX=OFF \
     -DGGML_AVX2=OFF \
     -DGGML_F16C=OFF \
     -DGGML_FMA=OFF
