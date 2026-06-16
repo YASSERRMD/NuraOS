@@ -65,10 +65,10 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		return nil, fmt.Errorf("QEMUOpts.RepoRoot is required")
 	}
 	if opts.MemMB == 0 {
-		opts.MemMB = 256
+		opts.MemMB = 512
 	}
 	if opts.CPUs == 0 {
-		opts.CPUs = 1
+		opts.CPUs = 2
 	}
 	if opts.Kernel == "" {
 		opts.Kernel = filepath.Join(opts.RepoRoot, "image", "out", "bzImage")
@@ -94,53 +94,37 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
-	// nokaslr disables kernel address-space layout randomisation at boot.
-	// Under QEMU TCG the host supplies no hardware entropy (no RDRAND in
-	// qemu64 CPU), so KASLR falls back to TSC-seeded randomness.  On some
-	// kernel/QEMU combos the resulting memory layout causes a very early
-	// panic before any serial output is produced.  Disabling it makes boot
-	// deterministic and eliminates KASLR as a failure mode in CI.
-	// earlyprintk routes printk to COM1 before console_init() so we capture
-	// the full boot log including any pre-console panics.
-	// earlycon=uart8250,io,0x3f8 is the modern earlycon framework path (requires
-	// CONFIG_SERIAL_EARLYCON=y); earlyprintk=serial,ttyS0 is the legacy path
-	// (requires CONFIG_EARLY_PRINTK=y). Both write to COM1 (I/O port 0x3F8).
-	// Having both maximises the chance of capturing output if one path initialises
-	// before the other. nokaslr + CONFIG_RANDOMIZE_BASE=n eliminates KASLR as
-	// a failure mode under QEMU TCG.
+	// console=ttyS0 routes printk to COM1 (the QEMU serial backend).
+	// earlycon and earlyprintk enable output before console_init() so we
+	// capture any early panic.  nokaslr makes boot deterministic; panic=5
+	// forces a clean exit on panic so the harness detects boot failure fast.
 	kernelArgs := "console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// Build QEMU argument list. -serial file:PATH writes all ttyS0 output
-	// directly to the file the moment the guest writes it -- no connection
-	// handshake, no buffering, no lost bytes.  virtio-rng-pci seeds the guest
-	// CSPRNG from host entropy; -no-reboot converts the panic emergency_restart
-	// into a clean QEMU exit so the harness fast-fails on boot panic.
-	//
-	// Machine: pc (i440fx) is the traditional QEMU machine for direct kernel boot.
-	// Accel: kvm:tcg tries KVM first (GitHub Actions Ubuntu 24.04 runners support
-	// nested KVM), falling back to TCG. Pure TCG (accel=tcg) was causing a silent
-	// triple fault before any kernel instruction executed -- the fault showed up as
-	// two CPU resets in qemu-stderr with no serial output and no interrupt trace,
-	// indicating QEMU's TCG setup (not kernel code) was faulting.
-	// CPU: Haswell-noTSX is a well-tested Intel model that pre-dates LA57
-	// (5-level paging, Ice Lake+).  Using -cpu max under nested KVM exposes LA57
-	// in CPUID, causing the decompressor's startup_64 to attempt CR4.LA57=1;
-	// that #GP with no IDT installed cascades to a triple fault before any
-	// serial output.  Haswell-noTSX's CPUID does not report LA57, so the
-	// decompressor skips that code path.  The -noTSX suffix disables
-	// transactional memory to avoid another common nested-KVM incompatibility.
+	// Build QEMU argument list.
+	// Machine: q35 matches the project's run-qemu.sh and is better supported
+	// under TCG than the older i440fx (pc) machine type.
+	// Accel: pure TCG (software emulation) avoids nested-KVM compatibility
+	// issues on GitHub Actions Azure runners (Hyper-V → KVM → guest is three
+	// levels deep and has known MSR/CPUID gaps). The project's own run-qemu.sh
+	// uses accel=tcg; we follow that choice.
+	// CPU: qemu64 is QEMU's own x86_64 model tuned for TCG -- it exposes all
+	// required x86_64 features without exotic extensions (LA57, AVX-512, etc.)
+	// that cause failures under nested virtualisation.
+	// -serial file:PATH writes all ttyS0 bytes directly to disk the moment the
+	// guest writes them -- no connection race, no buffering, no lost bytes.
+	// -no-reboot converts panic emergency_restart into a clean QEMU exit so
+	// the harness fast-fails on boot panic.
 	args := []string{
-		"-machine", "pc,accel=kvm:tcg",
-		"-cpu", "Haswell-noTSX",
+		"-machine", "q35,accel=tcg",
+		"-cpu", "qemu64",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
 		"-serial", fmt.Sprintf("file:%s", serialLog),
 		"-device", "virtio-rng-pci",
-		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
