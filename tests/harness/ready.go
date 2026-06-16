@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -32,15 +31,19 @@ func WaitReady(ctx context.Context, inst *QEMUInstance, timeout time.Duration) e
 		}
 
 		// Fast-fail: detect QEMU exit (kernel panic → -no-reboot → process dead).
-		if inst.cmd != nil && inst.cmd.Process != nil {
-			if err := inst.cmd.Process.Signal(os.Signal(nil)); err != nil {
-				// Process.Signal(nil) returns an error only when the process has exited.
-				ps := inst.cmd.ProcessState
-				if ps != nil {
-					return fmt.Errorf("QEMU exited early (code %d): guest never became ready", ps.ExitCode())
-				}
-				return fmt.Errorf("QEMU exited early: guest never became ready")
+		// The background reaper in BootQEMU closes inst.exited when the process
+		// terminates. (The old check used Process.Signal(os.Signal(nil)), but a
+		// nil signal fails Go's syscall.Signal type assertion and returns an
+		// error for a LIVE process too -- so WaitReady wrongly reported "exited
+		// early" on the very first poll, before the guest could boot.)
+		select {
+		case <-inst.exited:
+			ps := inst.cmd.ProcessState
+			if ps != nil {
+				return fmt.Errorf("QEMU exited early (code %d): guest never became ready", ps.ExitCode())
 			}
+			return fmt.Errorf("QEMU exited early: guest never became ready")
+		default:
 		}
 
 		resp, err := client.Get(url) //nolint:noctx

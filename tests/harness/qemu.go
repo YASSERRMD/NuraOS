@@ -51,6 +51,10 @@ type QEMUInstance struct {
 	tmpDir string
 	serial *SerialClient
 	http   *HTTPClient
+	// exited is closed by a background reaper goroutine once the QEMU process
+	// terminates. WaitReady selects on it to fast-fail on an early exit, and
+	// Close waits on it instead of calling cmd.Wait() a second time.
+	exited chan struct{}
 }
 
 // BootQEMU starts a NuraOS VM in QEMU and returns a handle to it.
@@ -125,12 +129,12 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-display", "none",
 		"-serial", fmt.Sprintf("file:%s", serialLog),
 		"-device", "virtio-rng-pci",
-		// -d int logs every exception/interrupt delivered to the guest so we
-		// can see the exact exception type, address, and error code that
-		// initiates the triple-fault chain.  Under -kernel (no BIOS) with
-		// IRQs masked during early boot, output is compact: just the
-		// exception chain that causes the reset.
-		"-d", "int,cpu_reset",
+		// NOTE: do NOT add "-d int" here. Under TCG it logs every interrupt the
+		// guest takes -- once the kernel boots and the 250Hz timer fires on all
+		// CPUs that is megabytes of stderr per second, which starves the VM and
+		// makes QEMU exit before /healthz ever comes up (the guest boots fine
+		// without it -- verified locally). cpu_reset/guest_errors are low-volume
+		// and safe if early-boot diagnostics are ever needed again.
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
@@ -168,13 +172,21 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	}
 	_ = qemuStderr.Close()
 
+	// Background reaper: a single goroutine owns cmd.Wait() so the process is
+	// reaped exactly once. It closes `exited` on termination, giving WaitReady a
+	// reliable early-exit signal and Close a way to wait without a second Wait().
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+
 	// Wait briefly for QEMU to create the serial log file before starting the
 	// poll loop.  With file backend QEMU creates the file at startup (before
 	// the VM begins executing), so this usually completes in milliseconds.
 	if err := waitForFile(serialLog, 5*time.Second); err != nil {
 		cancel()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-exited
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("waiting for serial log file: %w", err)
 	}
@@ -194,6 +206,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		http: &HTTPClient{
 			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", apiPort),
 		},
+		exited: exited,
 	}, nil
 }
 
@@ -210,7 +223,11 @@ func (q *QEMUInstance) Close() error {
 	if q.serial != nil {
 		q.serial.close()
 	}
-	_ = q.cmd.Wait()
+	// The background reaper owns cmd.Wait(); wait for it to finish rather than
+	// calling Wait() a second time (which would race / error).
+	if q.exited != nil {
+		<-q.exited
+	}
 	return os.RemoveAll(q.tmpDir)
 }
 
