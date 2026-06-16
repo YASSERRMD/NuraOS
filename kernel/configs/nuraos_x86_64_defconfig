@@ -78,11 +78,16 @@ CONFIG_POSIX_TIMERS=y
 # ----- Modules: disabled -----
 CONFIG_MODULES=n
 
-# ----- KASLR and stack protection: disabled for QEMU TCG -----
-# These interact with QEMU TCG and cause a silent panic before parse_early_param().
+# ----- KASLR, stack protection, 5-level paging: disabled for QEMU TCG -----
+# KASLR and STACKPROTECTOR interact poorly with QEMU TCG.
+# X86_5LEVEL (LA57) defaults to y; with -cpu max the decompressor's startup_64
+# detects LA57 in CPUID and sets CR4.LA57=1 -- under nested KVM that #GP
+# cascades to a triple fault before any IDT is installed.  Force it off so
+# the LA57 code path is compiled out regardless of CPU model.
 CONFIG_RANDOMIZE_BASE=n
 CONFIG_RANDOMIZE_MEMORY=n
 CONFIG_STACKPROTECTOR=n
+CONFIG_X86_5LEVEL=n
 
 # ----- Namespace isolation -----
 CONFIG_NAMESPACES=y

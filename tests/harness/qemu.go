@@ -125,13 +125,16 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// triple fault before any kernel instruction executed -- the fault showed up as
 	// two CPU resets in qemu-stderr with no serial output and no interrupt trace,
 	// indicating QEMU's TCG setup (not kernel code) was faulting.
-	// CPU: max exposes the best available feature set -- on KVM this is the host
-	// CPU, on TCG fallback it is the maximum set the emulator can provide.  This
-	// avoids the -cpu host restriction (requires KVM/HVF) while still giving
-	// full feature coverage when KVM is present.
+	// CPU: Haswell-noTSX is a well-tested Intel model that pre-dates LA57
+	// (5-level paging, Ice Lake+).  Using -cpu max under nested KVM exposes LA57
+	// in CPUID, causing the decompressor's startup_64 to attempt CR4.LA57=1;
+	// that #GP with no IDT installed cascades to a triple fault before any
+	// serial output.  Haswell-noTSX's CPUID does not report LA57, so the
+	// decompressor skips that code path.  The -noTSX suffix disables
+	// transactional memory to avoid another common nested-KVM incompatibility.
 	args := []string{
 		"-machine", "pc,accel=kvm:tcg",
-		"-cpu", "max",
+		"-cpu", "Haswell-noTSX",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
