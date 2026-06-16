@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/banner.png" alt="NuraOS" width="820">
+</p>
+
 # NuraOS
 
 A tiny, headless, AI-integrated operating system built from a raw Linux kernel
@@ -18,6 +22,18 @@ Key properties:
 - Minimal: every component is justified by the boot-to-agent path.
 - Reproducible: all sources are pinned. Builds are locked and verifiable.
 - Inspectable: every interaction is recorded in an append-only, hash-chained log.
+
+## Architecture
+
+<p align="center">
+  <img src="docs/assets/architecture.png" alt="NuraOS architecture" width="100%">
+</p>
+
+NuraOS boots straight into a small service supervisor (`nura-manager`, PID 1)
+that launches the inference server, the Rust agent core, and the HTTP gateway,
+each confined by its own cgroup v2 slice, seccomp-BPF filter, and Landlock
+ruleset. Everything sits on a minimal musl/BusyBox userland over a tinyconfig
+Linux 6.6 kernel, talking to the host through virtio devices.
 
 ## Build pipeline
 
