@@ -32,8 +32,39 @@ log "running olddefconfig to resolve remaining symbols ..."
 make -C "${LINUX_DIR}" ARCH=x86_64 olddefconfig
 
 log ".config written to ${LINUX_DIR}/.config"
-log "summary:"
-grep -E "^(CONFIG_MODULES|CONFIG_EXT4_FS|CONFIG_VIRTIO|CONFIG_SERIAL_8250|CONFIG_BLK_DEV_INITRD|CONFIG_RANDOMIZE_MEMORY|CONFIG_BUG_ON_DATA_CORRUPTION|CONFIG_EARLY_PRINTK)=" \
-    "${LINUX_DIR}/.config" | sed 's/^/  /' || true
+
+# Save a copy of the resolved .config into the image output dir so CI uploads it
+# as part of the nuraos-image artifact for offline inspection.
+OUT_DIR="${REPO_ROOT}/image/out"
+mkdir -p "${OUT_DIR}"
+cp "${LINUX_DIR}/.config" "${OUT_DIR}/kernel.config" || true
+
+# Verify that critical symbols actually SURVIVED olddefconfig.  olddefconfig
+# silently drops any symbol whose dependencies are unmet, so a symbol present in
+# the fragment is NOT guaranteed to be in the final .config.  Print the full
+# state (including "is not set") of the symbols that matter for boot + serial.
+log "post-olddefconfig state of critical symbols:"
+for sym in \
+    CONFIG_TTY CONFIG_SERIAL_CORE CONFIG_SERIAL_CORE_CONSOLE \
+    CONFIG_SERIAL_8250 CONFIG_SERIAL_8250_CONSOLE CONFIG_SERIAL_8250_PCI \
+    CONFIG_SERIAL_8250_NR_UARTS CONFIG_SERIAL_8250_RUNTIME_UARTS \
+    CONFIG_SERIAL_EARLYCON CONFIG_EARLY_PRINTK CONFIG_HAS_IOPORT \
+    CONFIG_KERNEL_GZIP CONFIG_KERNEL_XZ \
+    CONFIG_VIRTIO CONFIG_VIRTIO_PCI CONFIG_VIRTIO_BLK CONFIG_VIRTIO_NET \
+    CONFIG_EXT4_FS CONFIG_BLK_DEV_INITRD CONFIG_DEVTMPFS; do
+    line=$(grep -E "^(${sym}=| *# ${sym} is not set)" "${LINUX_DIR}/.config" || true)
+    if [ -z "${line}" ]; then
+        line="${sym} ABSENT (not in .config at all)"
+    fi
+    printf '  %s\n' "${line}"
+done
+
+# Warn loudly if the serial console driver was dropped: without it the guest
+# produces zero serial output and every integration suite fails to boot.
+# (Diagnostic build -- once the dependency is fixed this becomes a hard die.)
+if ! grep -qE "^CONFIG_SERIAL_8250=y" "${LINUX_DIR}/.config"; then
+    log "WARNING: CONFIG_SERIAL_8250 was DROPPED by olddefconfig -- guest will have NO serial console!"
+    log "WARNING: inspect the symbol state above to find the unmet dependency."
+fi
 
 log "done."
