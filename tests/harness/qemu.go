@@ -99,9 +99,12 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// RDRAND before the virtio-rng device is available. KASLR runs in the
 	// decompressor phase, before any serial console is set up, so a failure
 	// there produces zero serial output and looks identical to a silent hang.
-	// earlyprintk=serial,ttyS0,115200: capture output before console_init().
+	// earlycon=uart8250,io,0x3f8,115200: register the 8250 UART as an early
+	// console via the earlycon infrastructure (independent of earlyprintk).
+	// This path avoids register_console() list operations during early boot.
+	// earlyprintk=serial,ttyS0,115200: second early console path for redundancy.
 	// panic=5: reboot after 5 s so -no-reboot can exit QEMU on a kernel panic.
-	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
+	kernelArgs := "console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}

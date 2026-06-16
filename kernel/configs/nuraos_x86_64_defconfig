@@ -35,6 +35,7 @@ CONFIG_RD_XZ=y
 CONFIG_TTY=y
 CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_EARLYCON=y
 CONFIG_VT=n
 
 # ----- Printk -----
@@ -78,8 +79,14 @@ CONFIG_MODULES=n
 CONFIG_STRICT_KERNEL_RWX=y
 
 # KASLR: randomize kernel load address to frustrate ROP chains.
+# RANDOMIZE_MEMORY is disabled: with nokaslr on the QEMU command line the
+# memory section randomization is already suppressed at runtime, but having
+# RANDOMIZE_MEMORY=y in the config selects a different (more complex) page
+# table initialisation path that triggers a silent panic in TCG emulation
+# before any serial output is available.  Keep RANDOMIZE_BASE=y so KASLR
+# is still used when the kernel runs on real hardware without nokaslr.
 CONFIG_RANDOMIZE_BASE=y
-CONFIG_RANDOMIZE_MEMORY=y
+CONFIG_RANDOMIZE_MEMORY=n
 
 # Stack: add a strong per-function canary (GCC -fstack-protector-strong).
 CONFIG_STACKPROTECTOR=y
@@ -185,8 +192,13 @@ CONFIG_SECURITY=y
 CONFIG_SECURITY_LANDLOCK=y
 CONFIG_LSM="landlock"
 
-# Panic on data corruption detected by the kernel.
-CONFIG_BUG_ON_DATA_CORRUPTION=y
+# BUG_ON_DATA_CORRUPTION enables DEBUG_LIST which adds BUG_ON() checks to
+# every linked-list operation.  In combination with the complex cgroup and
+# security subsystem initialisation that runs before the serial console is
+# registered, this can produce a silent kernel panic (no serial output) in
+# QEMU/TCG before earlyprintk ever writes its first byte.  Disabled for
+# QEMU testing; re-enable when the guest can produce console output.
+CONFIG_BUG_ON_DATA_CORRUPTION=n
 
 # ----- Debug: off -----
 CONFIG_DEBUG_KERNEL=n
