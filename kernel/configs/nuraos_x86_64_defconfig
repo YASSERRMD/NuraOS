@@ -49,6 +49,11 @@ CONFIG_PRINTK=y
 CONFIG_EARLY_PRINTK=y
 
 # ----- virtio -----
+# CONFIG_VIRTIO_MENU is the menu gate; tinyconfig (EXPERT=y + allnoconfig) turns
+# it OFF, which makes every VIRTIO_* sub-option below unavailable and silently
+# dropped by olddefconfig.  It must be explicitly enabled or the guest gets no
+# virtio-net (no /healthz reachability), virtio-blk (/data), or virtio-rng.
+CONFIG_VIRTIO_MENU=y
 CONFIG_VIRTIO=y
 CONFIG_VIRTIO_PCI=y
 CONFIG_VIRTIO_BLK=y
@@ -118,6 +123,27 @@ CONFIG_CGROUP_PIDS=y
 # ----- Seccomp (needed by gateway) -----
 CONFIG_SECCOMP=y
 CONFIG_SECCOMP_FILTER=y
+
+# ----- Core syscalls / features (EXPERT-gated; tinyconfig disables them) -----
+# tinyconfig sets CONFIG_EXPERT=y, which exposes prompts for normally-forced
+# core options; allnoconfig then answers "no" to all of them.  These must be
+# re-enabled explicitly or userspace breaks in non-obvious ways:
+#   FUTEX            -- without it the futex syscall returns ENOSYS (-38) and
+#                       EVERY Go binary (nura-manager, gateway) segfaults on its
+#                       first runtime.futexwakeup -> PID 1 dies -> kernel panic.
+#   MEMBARRIER       -- Go runtime uses sys_membarrier for goroutine preemption.
+#   ADVISE_SYSCALLS  -- madvise()/fadvise(); Go's allocator calls madvise.
+#   BUG / BASE_FULL  -- proper BUG()/WARN() handling and full-size core data
+#                       structures; stripped variants cause subtle instability.
+#   FHANDLE          -- name_to_handle_at/open_by_handle_at, used by tooling.
+#   POSIX_MQUEUE     -- POSIX message queues.
+CONFIG_FUTEX=y
+CONFIG_MEMBARRIER=y
+CONFIG_ADVISE_SYSCALLS=y
+CONFIG_BUG=y
+CONFIG_BASE_FULL=y
+CONFIG_FHANDLE=y
+CONFIG_POSIX_MQUEUE=y
 
 # ----- Misc needed -----
 CONFIG_MULTIUSER=y
