@@ -119,19 +119,20 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// CSPRNG from host entropy; -no-reboot converts the panic emergency_restart
 	// into a clean QEMU exit so the harness fast-fails on boot panic.
 	//
-	// Machine: pc (i440fx) is the traditional QEMU machine for direct kernel
-	// boot -- more battle-tested than q35 with -kernel bzImage.
-	// CPU: Westmere includes RDRAND-capable descendant features and is a stable
-	// well-known model under TCG; qemu64 lacks several features Linux 6.6 uses.
+	// Machine: pc (i440fx) is the traditional QEMU machine for direct kernel boot.
+	// CPU: qemu64 is QEMU's canonical virtual x86_64 CPU; it is well-tested under
+	// TCG and avoids any Westmere-specific TCG emulation quirks.
+	// -d int,cpu_reset,guest_errors logs every exception/interrupt to qemu-stderr
+	// so we can trace the exact fault that causes a triple fault before serial init.
 	args := []string{
 		"-machine", "pc,accel=tcg",
-		"-cpu", "Westmere",
+		"-cpu", "qemu64",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
 		"-serial", fmt.Sprintf("file:%s", serialLog),
 		"-device", "virtio-rng-pci",
-		"-d", "cpu_reset,guest_errors",
+		"-d", "int,cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
