@@ -4,12 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 )
 
 // WaitReady polls the guest /healthz endpoint until it returns HTTP 200 or
 // the timeout elapses. It never uses fixed sleeps; each failed attempt waits
 // a short interval before the next poll.
+//
+// If the QEMU process exits before the guest becomes ready (e.g. kernel panic
+// with -no-reboot) the function returns immediately instead of waiting for the
+// full timeout, so CI logs show a fast, actionable failure rather than a
+// silent 6-minute hang.
 func WaitReady(ctx context.Context, inst *QEMUInstance, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", inst.APIPort)
@@ -23,6 +29,18 @@ func WaitReady(ctx context.Context, inst *QEMUInstance, timeout time.Duration) e
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+
+		// Fast-fail: detect QEMU exit (kernel panic → -no-reboot → process dead).
+		if inst.cmd != nil && inst.cmd.Process != nil {
+			if err := inst.cmd.Process.Signal(os.Signal(nil)); err != nil {
+				// Process.Signal(nil) returns an error only when the process has exited.
+				ps := inst.cmd.ProcessState
+				if ps != nil {
+					return fmt.Errorf("QEMU exited early (code %d): guest never became ready", ps.ExitCode())
+				}
+				return fmt.Errorf("QEMU exited early: guest never became ready")
+			}
 		}
 
 		resp, err := client.Get(url) //nolint:noctx
