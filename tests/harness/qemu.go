@@ -101,11 +101,9 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	}
 
 	// Build QEMU argument list. We use -display none so QEMU runs headlessly,
-	// and -serial unix:SOCK so the serial console is accessible via a socket
-	// rather than stdio. This lets us both capture boot output and send
-	// REPL commands programmatically.
-	// server (no nowait): QEMU waits for the client to connect before booting,
-	// ensuring we capture all serial output from the very first kernel message.
+	// and -serial unix:SOCK,server,nowait so the serial console is accessible
+	// via a socket rather than stdio. nowait lets QEMU start the VM immediately
+	// without blocking for a client connection.
 	// virtio-rng-pci: provides hardware entropy so the guest CSPRNG seeds
 	// immediately and gateway startup is not delayed by entropy starvation.
 	args := []string{
@@ -116,7 +114,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-display", "none",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
-		"-serial", fmt.Sprintf("unix:%s,server", serialSock),
+		"-serial", fmt.Sprintf("unix:%s,server,nowait", serialSock),
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
