@@ -120,19 +120,22 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// into a clean QEMU exit so the harness fast-fails on boot panic.
 	//
 	// Machine: pc (i440fx) is the traditional QEMU machine for direct kernel boot.
-	// CPU: qemu64 is QEMU's canonical virtual x86_64 CPU; it is well-tested under
-	// TCG and avoids any Westmere-specific TCG emulation quirks.
-	// -d int,cpu_reset,guest_errors logs every exception/interrupt to qemu-stderr
-	// so we can trace the exact fault that causes a triple fault before serial init.
+	// Accel: kvm:tcg tries KVM first (GitHub Actions Ubuntu 24.04 runners support
+	// nested KVM), falling back to TCG. Pure TCG (accel=tcg) was causing a silent
+	// triple fault before any kernel instruction executed -- the fault showed up as
+	// two CPU resets in qemu-stderr with no serial output and no interrupt trace,
+	// indicating QEMU's TCG setup (not kernel code) was faulting.
+	// CPU: host when KVM is available gives best compatibility; with TCG fallback
+	// qemu64 is the canonical virtual x86_64 model.
 	args := []string{
-		"-machine", "pc,accel=tcg",
-		"-cpu", "qemu64",
+		"-machine", "pc,accel=kvm:tcg",
+		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
 		"-serial", fmt.Sprintf("file:%s", serialLog),
 		"-device", "virtio-rng-pci",
-		"-d", "int,cpu_reset,guest_errors",
+		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
