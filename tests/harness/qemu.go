@@ -106,12 +106,16 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	}
 
 	// Build QEMU argument list. We use -display none so QEMU runs headlessly.
+	// -machine pc: use the classic i440fx+PIIX3 machine type instead of q35.
+	//   q35 has a more complex PCIe/ICH9 topology; pc is simpler and more proven
+	//   for direct-kernel boot with -kernel. We can switch to q35 once boot works.
 	// -serial stdio: map the guest serial port to QEMU's own stdout so the
-	// harness can redirect it to a log file via cmd.Stdout. This completely
-	// bypasses chardev socket/file timing and is the most reliable capture path.
+	//   harness can redirect it to a log file via cmd.Stdout. Most reliable path.
+	// -d cpu_reset,guest_errors: emit CPU reset and guest error events to stderr
+	//   (captured in qemu-stderr.log). Reveals triple-faults and BUS errors.
 	// virtio-rng-pci: provides hardware entropy once the guest OS is running.
 	args := []string{
-		"-machine", "q35,accel=kvm:tcg",
+		"-machine", "pc,accel=kvm:tcg",
 		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
@@ -119,6 +123,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
 		"-serial", "stdio",
+		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
 		"-kernel", opts.Kernel,
 		"-initrd", opts.Initramfs,
