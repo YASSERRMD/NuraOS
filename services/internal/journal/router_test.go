@@ -28,7 +28,9 @@ func TestMultiHandlerFanout(t *testing.T) {
 	}
 }
 
-// TestSeverityRouting verifies NewRouter sends warnings+ to console and all to journal.
+// TestSeverityRouting verifies NewRouter sends info+ to console and all to journal.
+// The console is the serial port on a headless boot, so Info-level lifecycle
+// logs must reach it; the journal additionally captures the full stream.
 func TestSeverityRouting(t *testing.T) {
 	dir := t.TempDir()
 	jw, err := journal.NewWriter(dir, 0)
@@ -48,10 +50,10 @@ func TestSeverityRouting(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	_ = jw.Close()
 
-	// Console should only have warn+ records.
+	// Console should carry info+ records (info, warn, error).
 	consoleOutput := consoleBuf.String()
-	if contains(consoleOutput, "info message") {
-		t.Error("console received info message; expected only warn+")
+	if !contains(consoleOutput, "info message") {
+		t.Error("console missing info message; expected info+")
 	}
 	if !contains(consoleOutput, "warn message") {
 		t.Error("console missing warn message")
