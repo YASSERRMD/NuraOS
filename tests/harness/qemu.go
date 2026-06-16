@@ -99,18 +99,21 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// -nographic routes the guest serial port to QEMU's own stdout, matching
-	// scripts/run-qemu.sh. Using -display none + -serial stdio does NOT achieve
-	// the same routing; only -nographic correctly wires ttyS0 to stdio so
-	// cmd.Stdout captures kernel console output.
-	// pc (i440fx) machine: simpler PCI topology than q35; avoids PCIe root
-	// complex probing that can hang the kernel in early boot.
+	// Match scripts/run-qemu.sh exactly:
+	//   -nographic -serial "mon:stdio"
+	// -nographic disables VGA; -serial mon:stdio explicitly muxes ttyS0 with
+	// the QEMU monitor on stdio. Without the explicit -serial flag, -nographic
+	// alone may not route ttyS0 correctly when stdin is /dev/null.
+	// Both stdout and stderr are captured to serial.log (mirrors the script's
+	// "2>&1 | tee" pattern) so QEMU startup messages and kernel serial output
+	// appear together for diagnosis.
 	args := []string{
 		"-machine", "pc,accel=kvm:tcg",
 		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-nographic",
+		"-serial", "mon:stdio",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
 		"-no-reboot",
@@ -134,8 +137,9 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	vmCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(vmCtx, "qemu-system-x86_64", args...)
 
-	// Redirect QEMU stdout → serial.log (-nographic wires ttyS0 here).
-	// Redirect QEMU stderr → qemu.stderr (QEMU internal messages).
+	// Redirect QEMU stdout (serial+monitor) and stderr (QEMU messages) to the
+	// same serial.log, mirroring run-qemu.sh's "2>&1 | tee" pattern so all
+	// QEMU and kernel output ends up in one place for diagnosis.
 	serialFile, err := os.Create(serialLog)
 	if err != nil {
 		cancel()
@@ -143,20 +147,16 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		return nil, fmt.Errorf("creating serial log: %w", err)
 	}
 	cmd.Stdout = serialFile
+	cmd.Stderr = serialFile
 
-	qemuStderr, err := os.Create(qemuStderrPath)
-	if err != nil {
-		_ = serialFile.Close()
-		cancel()
-		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("creating qemu stderr log: %w", err)
-	}
-	cmd.Stderr = qemuStderr
+	// Keep a separate qemu.stderr path in the instance for the evidence bundle
+	// (evidence.go copies StderrLogPath). With combined output it will equal
+	// serial.log, which is fine -- all info is preserved.
+	_ = os.WriteFile(qemuStderrPath, []byte("see serial.log (combined 2>&1)\n"), 0o644)
 
 	if err := cmd.Start(); err != nil {
 		_ = serialFile.Close()
 		cancel()
-		_ = qemuStderr.Close()
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("starting qemu-system-x86_64: %w", err)
 	}
