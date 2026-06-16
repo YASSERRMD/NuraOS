@@ -102,7 +102,13 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	// deterministic and eliminates KASLR as a failure mode in CI.
 	// earlyprintk routes printk to COM1 before console_init() so we capture
 	// the full boot log including any pre-console panics.
-	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
+	// earlycon=uart8250,io,0x3f8 is the modern earlycon framework path (requires
+	// CONFIG_SERIAL_EARLYCON=y); earlyprintk=serial,ttyS0 is the legacy path
+	// (requires CONFIG_EARLY_PRINTK=y). Both write to COM1 (I/O port 0x3F8).
+	// Having both maximises the chance of capturing output if one path initialises
+	// before the other. nokaslr + CONFIG_RANDOMIZE_BASE=n eliminates KASLR as
+	// a failure mode under QEMU TCG.
+	kernelArgs := "console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
