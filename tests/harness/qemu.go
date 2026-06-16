@@ -47,9 +47,10 @@ type QEMUInstance struct {
 	// RepoRoot is the NuraOS repository root used to boot this instance.
 	RepoRoot string
 
-	cmd        *exec.Cmd
-	cancel     context.CancelFunc
-	tmpDir     string
+	cmd       *exec.Cmd
+	cancel    context.CancelFunc
+	tmpDir    string
+	stdinW    *os.File // write-end of stdin pipe; kept open to prevent EOF
 	serialConn net.Conn
 	serial     *SerialClient
 	http       *HTTPClient
@@ -99,24 +100,25 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// Direct serial→stdio without a QEMU monitor mux.
-	// Using -serial mon:stdio muxes the QEMU monitor with serial on stdio; when
-	// stdin is /dev/null the monitor mux immediately receives EOF and propagates
-	// a close event to the serial chardev, silencing all kernel output.
-	// Solution: use a chardev with signal=off and disable the monitor entirely.
-	// -display none: headless (no VGA window)
-	// -chardev stdio,id=s0,signal=off: plain stdio backend, no signal intercept
-	// -serial chardev:s0: wire ttyS0 → the stdio chardev (no mux)
-	// -monitor null: disable QEMU monitor so mon:stdio is never implicitly added
+	// -nographic routes ttyS0 to QEMU's own stdout via the implicit mon:stdio
+	// mux. The mux reads stdin for monitor commands; when stdin is /dev/null
+	// QEMU processes EOF asynchronously. SeaBIOS outputs before that happens
+	// (fast, synchronous), but by the time the kernel starts (~200 ms later)
+	// the mux has seen EOF and stops forwarding serial TX. Fix: provide a
+	// pipe as QEMU's stdin that is never closed until Close(), so the mux
+	// never receives EOF and kernel output continues to flow to serialFile.
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("creating stdin pipe: %w", err)
+	}
+
 	args := []string{
 		"-machine", "pc,accel=kvm:tcg",
 		"-cpu", "host",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
-		"-display", "none",
-		"-chardev", "stdio,id=s0,signal=off",
-		"-serial", "chardev:s0",
-		"-monitor", "null",
+		"-nographic",
 		"-object", "rng-builtin,id=rng0",
 		"-device", "virtio-rng-pci,rng=rng0",
 		"-no-reboot",
@@ -140,11 +142,14 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	vmCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(vmCtx, "qemu-system-x86_64", args...)
 
-	// Redirect QEMU stdout (serial+monitor) and stderr (QEMU messages) to the
-	// same serial.log, mirroring run-qemu.sh's "2>&1 | tee" pattern so all
-	// QEMU and kernel output ends up in one place for diagnosis.
+	// Pipe as stdin: keeps the mon:stdio mux alive so kernel serial TX is
+	// forwarded. /dev/null would cause EOF → mux close → silent kernel.
+	cmd.Stdin = stdinR
+
 	serialFile, err := os.Create(serialLog)
 	if err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
 		cancel()
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("creating serial log: %w", err)
@@ -152,17 +157,18 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	cmd.Stdout = serialFile
 	cmd.Stderr = serialFile
 
-	// Keep a separate qemu.stderr path in the instance for the evidence bundle
-	// (evidence.go copies StderrLogPath). With combined output it will equal
-	// serial.log, which is fine -- all info is preserved.
-	_ = os.WriteFile(qemuStderrPath, []byte("see serial.log (combined 2>&1)\n"), 0o644)
+	_ = os.WriteFile(qemuStderrPath, []byte("see serial.log (combined stdout+stderr)\n"), 0o644)
 
 	if err := cmd.Start(); err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
 		_ = serialFile.Close()
 		cancel()
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("starting qemu-system-x86_64: %w", err)
 	}
+	// Read-end is handed to the child; close it in the parent.
+	_ = stdinR.Close()
 
 	return &QEMUInstance{
 		APIPort:       apiPort,
@@ -173,6 +179,7 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		cmd:           cmd,
 		cancel:        cancel,
 		tmpDir:        tmpDir,
+		stdinW:        stdinW,
 		http: &HTTPClient{
 			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", apiPort),
 		},
@@ -189,6 +196,9 @@ func (q *QEMUInstance) HTTP() *HTTPClient { return q.http }
 // all temporary files created for this instance.
 func (q *QEMUInstance) Close() error {
 	q.cancel()
+	if q.stdinW != nil {
+		_ = q.stdinW.Close()
+	}
 	if q.serial != nil {
 		q.serial.close()
 	}
