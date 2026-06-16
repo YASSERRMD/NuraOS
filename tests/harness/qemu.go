@@ -5,7 +5,6 @@ package harness
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,18 +46,19 @@ type QEMUInstance struct {
 	// RepoRoot is the NuraOS repository root used to boot this instance.
 	RepoRoot string
 
-	cmd        *exec.Cmd
-	cancel     context.CancelFunc
-	tmpDir     string
-	serialConn net.Conn
-	serial     *SerialClient
-	http       *HTTPClient
+	cmd    *exec.Cmd
+	cancel context.CancelFunc
+	tmpDir string
+	serial *SerialClient
+	http   *HTTPClient
 }
 
 // BootQEMU starts a NuraOS VM in QEMU and returns a handle to it.
 //
-// The serial console is connected via a UNIX socket so the harness can
-// read boot output and send REPL commands without fixed sleeps.
+// The serial console uses QEMU's file chardev backend (-serial file:PATH) so
+// ALL guest bytes -- including early decompressor and earlyprintk output -- are
+// written directly to disk with no connection race. The harness reads the file
+// asynchronously via SerialClient.WaitForPattern.
 // The caller must call Close() when the test is complete.
 func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 	if opts.RepoRoot == "" {
@@ -91,30 +91,34 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		return nil, fmt.Errorf("creating temp dir: %w", err)
 	}
 
-	serialSock := filepath.Join(tmpDir, "serial.sock")
 	serialLog := filepath.Join(tmpDir, "serial.log")
 	qemuStderrPath := filepath.Join(tmpDir, "qemu.stderr")
 
-	// earlyprintk captures output before console_init(); serial,ttyS0 routes
-	// directly to the 8250 UART (I/O port 0x3F8) so bytes appear even during
-	// very early setup_arch() before the full console subsystem is live.
-	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=5 loglevel=7"
+	// nokaslr disables kernel address-space layout randomisation at boot.
+	// Under QEMU TCG the host supplies no hardware entropy (no RDRAND in
+	// qemu64 CPU), so KASLR falls back to TSC-seeded randomness.  On some
+	// kernel/QEMU combos the resulting memory layout causes a very early
+	// panic before any serial output is produced.  Disabling it makes boot
+	// deterministic and eliminates KASLR as a failure mode in CI.
+	// earlyprintk routes printk to COM1 before console_init() so we capture
+	// the full boot log including any pre-console panics.
+	kernelArgs := "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 nokaslr panic=5 loglevel=7"
 	if opts.ExtraKernelArgs != "" {
 		kernelArgs += " " + opts.ExtraKernelArgs
 	}
 
-	// Build QEMU argument list. We use -display none so QEMU runs headlessly.
-	// -serial unix:SOCK,server (without nowait) makes QEMU pause the VM until
-	// the harness connects, guaranteeing ALL serial output is captured from the
-	// very first byte -- including decompressor and earlyprintk messages that
-	// would otherwise be lost before the client connects.
+	// Build QEMU argument list. -serial file:PATH writes all ttyS0 output
+	// directly to the file the moment the guest writes it -- no connection
+	// handshake, no buffering, no lost bytes.  virtio-rng-pci seeds the guest
+	// CSPRNG from host entropy; -no-reboot converts the panic emergency_restart
+	// into a clean QEMU exit so the harness fast-fails on boot panic.
 	args := []string{
 		"-machine", "q35,accel=tcg",
 		"-cpu", "qemu64",
 		"-m", fmt.Sprintf("%dM", opts.MemMB),
 		"-smp", fmt.Sprintf("%d", opts.CPUs),
 		"-display", "none",
-		"-serial", fmt.Sprintf("unix:%s,server", serialSock),
+		"-serial", fmt.Sprintf("file:%s", serialLog),
 		"-device", "virtio-rng-pci",
 		"-d", "cpu_reset,guest_errors",
 		"-no-reboot",
@@ -152,39 +156,20 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("starting qemu-system-x86_64: %w", err)
 	}
+	_ = qemuStderr.Close()
 
-	// Wait for QEMU to create the serial socket before connecting.
-	if err := waitForSocket(serialSock, 10*time.Second); err != nil {
+	// Wait briefly for QEMU to create the serial log file before starting the
+	// poll loop.  With file backend QEMU creates the file at startup (before
+	// the VM begins executing), so this usually completes in milliseconds.
+	if err := waitForFile(serialLog, 5*time.Second); err != nil {
 		cancel()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		_ = qemuStderr.Close()
 		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("waiting for serial socket: %w", err)
+		return nil, fmt.Errorf("waiting for serial log file: %w", err)
 	}
 
-	conn, err := net.Dial("unix", serialSock)
-	if err != nil {
-		cancel()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = qemuStderr.Close()
-		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("connecting to serial socket: %w", err)
-	}
-
-	logFile, err := os.Create(serialLog)
-	if err != nil {
-		_ = conn.Close()
-		cancel()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = qemuStderr.Close()
-		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("creating serial log: %w", err)
-	}
-
-	serial := newSerialClient(conn, logFile)
+	serial := newSerialClient(serialLog)
 
 	return &QEMUInstance{
 		APIPort:       apiPort,
@@ -195,7 +180,6 @@ func BootQEMU(ctx context.Context, opts QEMUOpts) (*QEMUInstance, error) {
 		cmd:           cmd,
 		cancel:        cancel,
 		tmpDir:        tmpDir,
-		serialConn:    conn,
 		serial:        serial,
 		http: &HTTPClient{
 			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", apiPort),
@@ -209,29 +193,25 @@ func (q *QEMUInstance) Serial() *SerialClient { return q.serial }
 // HTTP returns the HTTP client bound to the guest gateway port.
 func (q *QEMUInstance) HTTP() *HTTPClient { return q.http }
 
-// Close kills the QEMU process, disconnects the serial client, and removes
-// all temporary files created for this instance.
+// Close kills the QEMU process, stops the serial poll loop, and removes all
+// temporary files created for this instance.
 func (q *QEMUInstance) Close() error {
 	q.cancel()
 	if q.serial != nil {
 		q.serial.close()
 	}
-	if q.serialConn != nil {
-		_ = q.serialConn.Close()
-	}
 	_ = q.cmd.Wait()
 	return os.RemoveAll(q.tmpDir)
 }
 
-// waitForSocket polls until the UNIX socket at path appears or timeout elapses.
-// It uses short-interval polling rather than a fixed sleep.
-func waitForSocket(path string, timeout time.Duration) error {
+// waitForFile polls until the file at path appears or timeout elapses.
+func waitForFile(path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(path); err == nil {
 			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
-	return fmt.Errorf("serial socket %s did not appear within %s", path, timeout)
+	return fmt.Errorf("file %s did not appear within %s", path, timeout)
 }
