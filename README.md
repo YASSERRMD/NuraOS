@@ -34,6 +34,31 @@ NuraOS is a minimal appliance OS designed around a single objective: run an AI a
 
 ---
 
+## Why Not Just a Minimal Linux Image?
+
+A minimal embedded Linux for a single application is a solved problem. Yocto, Buildroot, and LXC all do that well. NuraOS is solving a different problem.
+
+When the application is a language model with tool-calling capabilities, the OS has to answer questions those tools were never designed for:
+
+**What can the model touch?**
+NuraOS enforces filesystem boundaries at the kernel level using Landlock and mount namespaces, not application code that can be bypassed or misconfigured.
+
+**What syscalls can the inference process make?**
+A per-service seccomp-BPF profile limits the kernel surface the model runtime can reach, shaped specifically around what an inference process needs and nothing else.
+
+**What resources can it consume?**
+cgroup v2 limits bound CPU, memory, and IO per service so inference cannot starve the control plane or destabilise the system under load.
+
+**What did it do?**
+Every prompt, tool call, and completion is recorded in an append-only, cryptographically chained provenance log on the device — verifiable without external infrastructure.
+
+**Where did inference happen?**
+A provider abstraction with residency-aware routing keeps sensitive turns on local or sovereign endpoints by policy, with every routing decision logged.
+
+LXC isolates containers on top of an existing OS. NuraOS removes the existing OS and replaces it with one designed around the AI agent. The kernel configuration, the seccomp profiles, the Landlock rules, the cgroup topology, and the provenance chain exist because of what a language model with tool-calling capabilities specifically needs — and must not be able to do. That co-design is what makes the guarantees real.
+
+---
+
 ## Architecture
 
 <p align="center">
